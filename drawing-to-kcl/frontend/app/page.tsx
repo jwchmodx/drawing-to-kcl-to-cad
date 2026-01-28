@@ -1,19 +1,80 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
 import { ImageUpload } from '@/components/ImageUpload';
 import { KclEditor } from '@/components/KclEditor';
 import { CommandInput } from '@/components/CommandInput';
 import { KclPreview3D } from '@/components/KclPreview3D';
+import { ErrorDisplay } from '@/components/ErrorDisplay';
+import { wasmKclEngine } from '@/lib/kclEngine';
+import { formatKclError, formatWasmError, formatNetworkError } from '@/lib/errorHandler';
 
 const BACKEND_BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL ?? 'http://localhost:8000';
 
 export default function Page() {
   const [kclCode, setKclCode] = useState('');
   const [preview, setPreview] = useState<unknown | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+
+  // Generate preview from KCL code using WASM engine
+  const generatePreview = async (code: string) => {
+    // #region agent log
+    fetch('http://127.0.0.1:7245/ingest/24a6f8bd-2395-4b39-929f-401c94dc986c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:22',message:'generatePreview called',data:{codeLength:code.length,codeTrimmed:code.trim().length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+    // #endregion
+
+    if (!code.trim()) {
+      setPreview(null);
+      setError(null);
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      // #region agent log
+      fetch('http://127.0.0.1:7245/ingest/24a6f8bd-2395-4b39-929f-401c94dc986c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:33',message:'Before wasmKclEngine.parse',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
+      // #endregion
+      const program = await wasmKclEngine.parse(code);
+      // #region agent log
+      fetch('http://127.0.0.1:7245/ingest/24a6f8bd-2395-4b39-929f-401c94dc986c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:34',message:'After wasmKclEngine.parse',data:{hasProgram:program !== null},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
+      // #endregion
+      const artifactGraph = await wasmKclEngine.execute(program);
+      
+      // Convert artifactGraph to preview format expected by KclPreview3D
+      // For now, return empty preview as artifactGraph structure needs to be defined
+      setPreview({
+        artifacts: [],
+        bbox: null,
+        meshes: [],
+      });
+    } catch (err) {
+      // #region agent log
+      fetch('http://127.0.0.1:7245/ingest/24a6f8bd-2395-4b39-929f-401c94dc986c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:43',message:'generatePreview error caught',data:{errorType:err instanceof Error ? err.constructor.name : typeof err,errorMessage:err instanceof Error ? err.message : String(err),errorStack:err instanceof Error ? err.stack?.substring(0,500) : undefined},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'G'})}).catch(()=>{});
+      // #endregion
+      const formattedError = formatKclError(err);
+      setError(formattedError);
+      setPreview(null);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Generate preview when KCL code changes
+  useEffect(() => {
+    if (kclCode) {
+      void generatePreview(kclCode);
+    } else {
+      setPreview(null);
+    }
+  }, [kclCode]);
 
   const handleImageSubmit = async (file: File) => {
+    setIsLoading(true);
+    setError(null);
+
     try {
       const formData = new FormData();
       formData.append('file', file);
@@ -24,23 +85,31 @@ export default function Page() {
       });
 
       if (!response.ok) {
+        setError(`Server error: ${response.status} ${response.statusText}`);
+        setIsLoading(false);
         return;
       }
 
       const data = await response.json();
       if (typeof data.kcl_code === 'string') {
         setKclCode(data.kcl_code);
+        // Preview will be generated automatically by useEffect
+      } else {
+        setError('Invalid response from server: missing KCL code');
       }
-      if (data.preview !== undefined) {
-        setPreview(data.preview);
-      }
-    } catch (error) {
-      // Handle network errors gracefully
-      console.error('Failed to convert image:', error);
+      // Backend preview field is ignored - we generate it in frontend
+    } catch (err) {
+      const formattedError = formatNetworkError(err);
+      setError(formattedError);
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const handleCommandSubmit = async (command: string) => {
+    setIsLoading(true);
+    setError(null);
+
     try {
       const payload = {
         kcl_code: kclCode,
@@ -56,19 +125,24 @@ export default function Page() {
       });
 
       if (!response.ok) {
+        setError(`Server error: ${response.status} ${response.statusText}`);
+        setIsLoading(false);
         return;
       }
 
       const data = await response.json();
       if (typeof data.kcl_code === 'string') {
         setKclCode(data.kcl_code);
+        // Preview will be generated automatically by useEffect
+      } else {
+        setError('Invalid response from server: missing KCL code');
       }
-      if (data.preview !== undefined) {
-        setPreview(data.preview);
-      }
-    } catch (error) {
-      // Handle network errors gracefully
-      console.error('Failed to modify KCL:', error);
+      // Backend preview field is ignored - we generate it in frontend
+    } catch (err) {
+      const formattedError = formatNetworkError(err);
+      setError(formattedError);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -76,9 +150,11 @@ export default function Page() {
     <main>
       <h1>Drawing to KCL</h1>
       <ImageUpload onSubmit={handleImageSubmit} />
+      {isLoading && <div>Loading...</div>}
+      <ErrorDisplay error={error} />
       {kclCode !== '' && <KclEditor value={kclCode} onChange={setKclCode} />}
       <CommandInput onSubmit={handleCommandSubmit} />
-      {preview && (
+      {preview !== null && (
         <section aria-label="KCL preview">
           <h2>Preview</h2>
           <KclPreview3D preview={preview} />

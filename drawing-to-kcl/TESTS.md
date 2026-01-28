@@ -10,8 +10,8 @@
 
 - **test_llm_client.py**: LLM 클라이언트 인터페이스 및 모킹 테스트
 - **test_storage.py**: KCL 코드 저장소 테스트
-- **test_kcl_runtime.py**: KCL 런타임 실행 및 결과 파싱 테스트
 - **test_api_endpoints.py**: FastAPI 엔드포인트 통합 테스트
+- **test_integration.py**: 전체 시스템 통합 테스트 (이미지 업로드 → KCL 변환 → 수정 플로우)
 
 ### Frontend 테스트 (`frontend/__tests__/`)
 
@@ -22,6 +22,8 @@
 - **KclEditor.test.tsx**: KCL 코드 에디터 컴포넌트 테스트
 - **CommandInput.test.tsx**: 명령어 입력 컴포넌트 테스트
 - **page.test.tsx**: 메인 페이지 통합 테스트
+- **integration.test.tsx**: 전체 프론트엔드 플로우 통합 테스트
+- **errorHandling.test.tsx**: 에러 처리 유틸리티 및 컴포넌트 테스트
 
 ## 테스트 실행 방법
 
@@ -29,13 +31,21 @@
 
 ```bash
 cd backend
-python -m pytest tests/ -v
+PYTHONPATH=.. python -m pytest tests/ -v
+```
+
+통합 테스트만 실행:
+
+```bash
+cd backend
+PYTHONPATH=.. python -m pytest tests/test_integration.py -v
 ```
 
 커버리지 리포트 포함:
 
 ```bash
-python -m pytest tests/ --cov=backend --cov-report=html
+cd backend
+PYTHONPATH=.. python -m pytest tests/ --cov=backend --cov-report=html
 ```
 
 ### Frontend 테스트
@@ -45,10 +55,32 @@ cd frontend
 npm test
 ```
 
+통합 테스트만 실행:
+
+```bash
+cd frontend
+npm test -- --testPathPattern="integration.test.tsx"
+```
+
 커버리지 리포트 포함:
 
 ```bash
+cd frontend
 npm run test:coverage
+```
+
+### 전체 통합 테스트 실행
+
+백엔드와 프론트엔드 통합 테스트를 모두 실행:
+
+```bash
+# Backend integration tests
+cd backend
+PYTHONPATH=.. python -m pytest tests/test_integration.py -v
+
+# Frontend integration tests
+cd ../frontend
+npm test -- --testPathPattern="integration.test.tsx"
 ```
 
 ## 커버리지 목표
@@ -182,9 +214,42 @@ FastAPI 엔드포인트는 `TestClient`를 사용하여 테스트합니다. 실�
 2. 에러 핸들링 경로 테스트 추가
 3. 에지 케이스 테스트 추가
 
+## 통합 테스트
+
+### Backend 통합 테스트 (`test_integration.py`)
+
+전체 시스템 플로우를 검증하는 통합 테스트:
+
+- **TestImageUploadToKCLFlow**: 이미지 업로드부터 KCL 코드 생성까지의 전체 플로우
+  - 이미지 업로드 → KCL 변환 → 코드 반환
+  - 컨텍스트 파라미터 포함/미포함 시나리오
+  - 저장소 지속성 검증
+
+- **TestKCLModificationFlow**: KCL 코드 수정 플로우
+  - 단일 수정 명령어 처리
+  - 다중 순차 수정 처리
+
+- **TestErrorHandlingFlow**: 에러 처리 통합 테스트
+  - 파일 누락 에러
+  - 필수 파라미터 누락 에러
+  - 빈 값 처리
+
+- **TestCORSIntegration**: CORS 헤더 통합 검증
+  - `/convert` 엔드포인트 CORS 헤더
+  - `/modify` 엔드포인트 CORS 헤더
+
+### Frontend 통합 테스트 (`integration.test.tsx`)
+
+프론트엔드 전체 사용자 플로우를 검증:
+
+- **Image Upload to KCL Conversion Flow**: 이미지 업로드부터 에디터 표시까지
+- **KCL Modification Flow**: KCL 코드 수정 및 프리뷰 재생성
+- **Error Handling Integration**: 네트워크 에러 및 서버 에러 처리
+- **Preview Generation Integration**: KCL 코드 변경 시 자동 프리뷰 생성
+
 ## 향후 개선 사항
 
-- [ ] E2E 테스트 추가 (Playwright 또는 Cypress)
+- [ ] E2E 테스트 추가 (Playwright 또는 Cypress) - 실제 브라우저에서 전체 플로우 테스트
 - [ ] 성능 테스트 추가
 - [ ] 부하 테스트 추가
 - [ ] 시각적 회귀 테스트 추가

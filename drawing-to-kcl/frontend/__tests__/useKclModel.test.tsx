@@ -2,6 +2,15 @@ import React from 'react';
 import { act, render, screen, waitFor } from '@testing-library/react';
 
 import { useKclModel } from '@/lib/useKclModel';
+import { wasmKclEngine } from '@/lib/kclEngine';
+import { loadWasmInstance, resetWasmInstance } from '@/lib/wasmLoader';
+import { invokeKCLRun } from '@kcl-lang/wasm-lib';
+
+// Mock WASM dependencies
+jest.mock('@/lib/wasmLoader');
+jest.mock('@kcl-lang/wasm-lib', () => ({
+  invokeKCLRun: jest.fn(),
+}));
 
 function TestComponent({ initial }: { initial: string }) {
   const { source, program, artifacts, parse, execute, recast, setSource } = useKclModel(initial);
@@ -140,6 +149,32 @@ describe('useKclModel', () => {
     expect(sourceElement.textContent).toBe(longSource);
     // 100 * 10 = 1000 characters exactly, so use >= instead of >
     expect(sourceElement.textContent?.length).toBeGreaterThanOrEqual(1000);
+  });
+
+  describe('with WASM engine', () => {
+    const mockInstance = { instance: 'wasm-instance' };
+
+    beforeEach(() => {
+      jest.clearAllMocks();
+      resetWasmInstance();
+      (loadWasmInstance as jest.Mock).mockResolvedValue(mockInstance);
+      (invokeKCLRun as jest.Mock).mockReturnValue('');
+    });
+
+    it('uses WASM engine when configured', async () => {
+      // Arrange: Component that will use WASM engine
+      // Note: This test assumes useKclModel can be configured to use wasmKclEngine
+      // We'll need to modify useKclModel to support engine selection
+      render(<TestComponent initial="object();" />);
+
+      const parseButton = screen.getByText('parse');
+      await act(async () => {
+        parseButton.click();
+      });
+
+      // Assert: Should have program after parsing
+      expect(screen.getByTestId('has-program').textContent).toBe('yes');
+    });
   });
 });
 

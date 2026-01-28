@@ -14,29 +14,7 @@ if str(backend_root) not in sys.path:
 
 from backend.llm import base  # type: ignore[import-not-found]
 
-# Mock backend.kcl_runtime before any imports that use it
-from backend.kcl_runtime import KclRunResult, KclPreview  # type: ignore[import-not-found]
-
-def _create_fake_run_kcl():
-    """Create a fake run_kcl function for testing."""
-    def fake_run_kcl(_code: str) -> KclRunResult:
-        return KclRunResult(
-            ok=True,
-            errors=[],
-            preview=KclPreview(
-                artifacts=["solid:test"],
-                bbox=(0, 0, 0, 1, 1, 1),
-                meshes=[],
-            ),
-        )
-    return fake_run_kcl
-
-
-# Set up default mock for backend.kcl_runtime.run_kcl
-# This will be used unless overridden in specific tests
-import backend.kcl_runtime as kcl_runtime_module  # type: ignore[import-not-found]
-_fake_run_kcl = _create_fake_run_kcl()
-kcl_runtime_module.run_kcl = _fake_run_kcl
+# KCL runtime has been removed - preview is now generated in frontend using WASM
 
 
 class FakeLLMClient(base.LLMClient):

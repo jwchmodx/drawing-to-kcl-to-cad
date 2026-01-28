@@ -21,8 +21,23 @@ pip install -r requirements.txt
 
 ### Run development server
 
+**Quick start (recommended):**
+```bash
+# Start both backend and frontend servers
+./start.sh
+```
+
+**Manual start:**
+
+From project root:
 ```bash
 uvicorn backend.main:app --reload
+```
+
+Or from `backend/` directory:
+```bash
+cd backend
+python -m uvicorn main:app --reload
 ```
 
 ### Run backend tests
@@ -75,6 +90,27 @@ The app will be available at `http://localhost:3000`.
 ```bash
 cd frontend
 npm test
+```
+
+### Run integration tests
+
+**Run all integration tests (backend + frontend):**
+```bash
+./run-integration-tests.sh
+```
+
+**Or run separately:**
+
+Backend integration tests:
+```bash
+cd backend
+PYTHONPATH=.. python -m pytest tests/test_integration.py -v
+```
+
+Frontend integration tests:
+```bash
+cd frontend
+npm test -- --testPathPattern="integration.test.tsx"
 ```
 
 ## Notes

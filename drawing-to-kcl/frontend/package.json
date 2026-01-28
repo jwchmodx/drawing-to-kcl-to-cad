@@ -10,6 +10,8 @@
     "test:coverage": "jest --coverage"
   },
   "dependencies": {
+    "@kcl-lang/wasm-lib": "^0.11.1",
+    "buffer": "^6.0.3",
     "next": "14.1.0",
     "react": "18.2.0",
     "react-dom": "18.2.0",
@@ -23,10 +25,10 @@
     "@types/node": "^20.11.30",
     "@types/react": "^18.2.66",
     "@types/react-dom": "^18.2.22",
+    "@types/three": "^0.182.0",
     "jest": "^29.7.0",
     "jest-environment-jsdom": "^29.7.0",
     "ts-jest": "^29.2.5",
     "typescript": "^5.4.0"
   }
 }
-

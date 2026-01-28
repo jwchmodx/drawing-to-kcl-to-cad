@@ -63,3 +63,9 @@ coverage/
 # Test artifacts
 *.log
 *.lcov
+
+# Start script artifacts
+.backend.pid
+.frontend.pid
+.backend.log
+.frontend.log

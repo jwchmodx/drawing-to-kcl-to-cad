@@ -3,6 +3,13 @@ import '@testing-library/jest-dom';
 // Provide a default mock for fetch that tests can override as needed.
 global.fetch = jest.fn();
 
+// Polyfill TextDecoder/TextEncoder for Node.js test environment (required by @wasmer/wasi)
+if (typeof TextDecoder === 'undefined') {
+  const { TextDecoder, TextEncoder } = require('util');
+  global.TextDecoder = TextDecoder;
+  global.TextEncoder = TextEncoder;
+}
+
 // Mock WebGL context for Three.js tests
 const createMockWebGLContext = () => {
   const mockContext = {
