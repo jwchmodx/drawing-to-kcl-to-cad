@@ -14,8 +14,9 @@ export const CommandInput: React.FC<CommandInputProps> = ({ onSubmit }) => {
   };
 
   const handleClick = () => {
-    if (command.trim()) {
-      onSubmit(command);
+    const trimmed = command.trim();
+    if (trimmed) {
+      onSubmit(trimmed);
     }
   };
 

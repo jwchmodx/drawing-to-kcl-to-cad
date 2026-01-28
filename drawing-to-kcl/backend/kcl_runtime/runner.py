@@ -8,6 +8,28 @@ from typing import Any, Tuple
 from pydantic import BaseModel, Field, ValidationError
 
 
+class MeshPreview(BaseModel):
+    """
+    Minimal mesh description for preview purposes.
+
+    Vertices are given as a flat list of 3D points, and indices are 0-based
+    triangle indices (3 per triangle).
+    """
+
+    id: str | None = Field(
+        default=None,
+        description="Optional identifier (e.g. artifact id or tag).",
+    )
+    vertices: list[Tuple[float, float, float]] = Field(
+        default_factory=list,
+        description="List of vertex positions as (x, y, z).",
+    )
+    indices: list[int] = Field(
+        default_factory=list,
+        description="Flat list of 0-based triangle indices (3 per triangle).",
+    )
+
+
 class KclPreview(BaseModel):
     """
     Lightweight geometry preview information returned from the KCL runtime.
@@ -23,6 +45,10 @@ class KclPreview(BaseModel):
     bbox: Tuple[float, float, float, float, float, float] | None = Field(
         default=None,
         description="Axis-aligned bounding box: (xmin, ymin, zmin, xmax, ymax, zmax).",
+    )
+    meshes: list[MeshPreview] = Field(
+        default_factory=list,
+        description="Optional lightweight mesh previews for one or more artifacts.",
     )
 
 
@@ -98,5 +124,16 @@ def run_kcl(code: str) -> KclRunResult:
                 preview=None,
             )
 
-    return asyncio.run(_invoke())
+    # Check if we're already in an event loop (e.g., in pytest-asyncio)
+    try:
+        loop = asyncio.get_running_loop()
+        # If we're in a running loop, we need to use a different approach
+        # For now, we'll create a new event loop in a thread
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(asyncio.run, _invoke())
+            return future.result()
+    except RuntimeError:
+        # No running loop, safe to use asyncio.run()
+        return asyncio.run(_invoke())
 

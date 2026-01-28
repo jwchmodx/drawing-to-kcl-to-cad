@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from backend.llm.base import LLMClient
 from backend.storage.in_memory import InMemoryKclStorage
+from backend.kcl_runtime import KclPreview, KclRunResult, run_kcl
 
 
 app = FastAPI(title="Drawing to KCL Backend")
@@ -63,6 +64,7 @@ def get_llm_client() -> LLMClient:
 class ConvertResponse(BaseModel):
     id: str
     kcl_code: str
+    preview: KclPreview | None = None
 
 
 class ModifyRequest(BaseModel):
@@ -72,6 +74,7 @@ class ModifyRequest(BaseModel):
 
 class ModifyResponse(BaseModel):
     kcl_code: str
+    preview: KclPreview | None = None
 
 
 @app.post("/convert", response_model=ConvertResponse)
@@ -87,8 +90,10 @@ async def convert(
     """
     image_bytes = await file.read()
     kcl_code = await llm.convert_drawing_to_kcl(image_bytes=image_bytes, context=context)
+    # Run the generated code through the KCL runtime to get a preview.
+    runtime_result: KclRunResult = run_kcl(kcl_code)
     version_id = storage.save_code(kcl_code)
-    return ConvertResponse(id=version_id, kcl_code=kcl_code)
+    return ConvertResponse(id=version_id, kcl_code=kcl_code, preview=runtime_result.preview)
 
 
 @app.patch("/modify", response_model=ModifyResponse)
@@ -101,7 +106,9 @@ async def modify(
     Modify existing KCL code according to a natural language command.
     """
     modified = await llm.modify_kcl_with_command(kcl_code=payload.kcl_code, command=payload.command)
+    # Run the modified code through the KCL runtime as well.
+    runtime_result: KclRunResult = run_kcl(modified)
     # We store the new version but ignore its id for the API response for now.
     storage.save_code(modified)
-    return ModifyResponse(kcl_code=modified)
+    return ModifyResponse(kcl_code=modified, preview=runtime_result.preview)
 
