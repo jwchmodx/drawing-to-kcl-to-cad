@@ -16,6 +16,12 @@ describe('wasmLoader', () => {
     // Arrange: Mock successful WASM load
     const mockInstance = { instance: 'wasm-instance' };
     (load as jest.Mock).mockResolvedValueOnce(mockInstance);
+     (global.fetch as jest.Mock).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      arrayBuffer: async () => new ArrayBuffer(8),
+    });
 
     // Act: Load WASM instance
     const instance = await loadWasmInstance();
@@ -29,6 +35,12 @@ describe('wasmLoader', () => {
     // Arrange: Mock failed WASM load
     const error = new Error('Failed to load WASM module');
     (load as jest.Mock).mockRejectedValueOnce(error);
+    (global.fetch as jest.Mock).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      arrayBuffer: async () => new ArrayBuffer(8),
+    });
 
     // Act & Assert: Should throw error
     await expect(loadWasmInstance()).rejects.toThrow('Failed to load WASM module');
@@ -38,7 +50,7 @@ describe('wasmLoader', () => {
   it('handles network error during WASM loading', async () => {
     // Arrange: Mock network error
     const networkError = new Error('Network request failed');
-    (load as jest.Mock).mockRejectedValueOnce(networkError);
+    (global.fetch as jest.Mock).mockRejectedValueOnce(networkError);
 
     // Act & Assert: Should throw network error
     await expect(loadWasmInstance()).rejects.toThrow('Network request failed');
@@ -48,6 +60,12 @@ describe('wasmLoader', () => {
     // Arrange: Mock WASM load
     const mockInstance = { instance: 'wasm-instance' };
     (load as jest.Mock).mockResolvedValue(mockInstance);
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      arrayBuffer: async () => new ArrayBuffer(8),
+    });
 
     // Act: Load multiple times
     const instance1 = await loadWasmInstance();

@@ -76,19 +76,40 @@ describe('wasmKclEngine', () => {
     it('executes program and returns artifact graph', async () => {
       // Arrange: Valid program
       const program = { source: 'object();' };
-      // invokeKCLRun returns YAML output, not structured object
-      (invokeKCLRun as jest.Mock).mockReturnValueOnce('');
+      // invokeKCLRun returns JSON string output representing an artifact graph
+      (invokeKCLRun as jest.Mock).mockReturnValueOnce(
+        JSON.stringify({
+          artifacts: ['solid:box1'],
+          nodes: {
+            'solid:box1': {
+              id: 'solid:box1',
+              type: 'solid',
+              geometry: {
+                vertices: [
+                  [0, 0, 0],
+                  [1, 0, 0],
+                  [0, 1, 0],
+                ],
+                indices: [0, 1, 2],
+              },
+            },
+          },
+        }),
+      );
 
       // Act: Execute program
       const artifacts = await wasmKclEngine.execute(program);
 
-      // Assert: Should return artifact graph (empty for now)
+      // Assert: Should return parsed artifact graph
       expect(loadWasmInstance).toHaveBeenCalledTimes(1);
       expect(invokeKCLRun).toHaveBeenCalledWith(mockInstance, {
         filename: 'execute.k',
         source: program.source,
       });
-      expect(artifacts).toEqual({});
+      expect(artifacts.artifacts).toEqual(['solid:box1']);
+      expect(artifacts.nodes['solid:box1']).toBeDefined();
+      expect(artifacts.nodes['solid:box1'].geometry?.vertices).toHaveLength(3);
+      expect(artifacts.nodes['solid:box1'].geometry?.indices).toEqual([0, 1, 2]);
     });
 
     it('handles execution error', async () => {
@@ -103,13 +124,19 @@ describe('wasmKclEngine', () => {
     it('handles empty artifact graph', async () => {
       // Arrange: Program that produces no artifacts
       const program = { source: '// empty program' };
-      (invokeKCLRun as jest.Mock).mockReturnValueOnce('');
+      (invokeKCLRun as jest.Mock).mockReturnValueOnce(
+        JSON.stringify({
+          artifacts: [],
+          nodes: {},
+        }),
+      );
 
       // Act: Execute program
       const artifacts = await wasmKclEngine.execute(program);
 
-      // Assert: Should return empty artifact graph
-      expect(artifacts).toEqual({});
+      // Assert: Should return empty artifact graph structure
+      expect(artifacts.artifacts).toEqual([]);
+      expect(Object.keys(artifacts.nodes)).toHaveLength(0);
     });
   });
 
@@ -161,7 +188,25 @@ describe('wasmKclEngine', () => {
 
       (invokeKCLRun as jest.Mock)
         .mockReturnValueOnce('') // parse
-        .mockReturnValueOnce('') // execute
+        .mockReturnValueOnce(
+          JSON.stringify({
+            artifacts: ['solid:box1'],
+            nodes: {
+              'solid:box1': {
+                id: 'solid:box1',
+                type: 'solid',
+                geometry: {
+                  vertices: [
+                    [0, 0, 0],
+                    [1, 0, 0],
+                    [0, 1, 0],
+                  ],
+                  indices: [0, 1, 2],
+                },
+              },
+            },
+          }),
+        ) // execute
         .mockReturnValueOnce(''); // recast
 
       // Act: Perform full workflow
@@ -171,7 +216,7 @@ describe('wasmKclEngine', () => {
 
       // Assert: All steps should succeed
       expect(parsed).toEqual(program);
-      expect(executed).toEqual({});
+      expect(executed.artifacts).toEqual(['solid:box1']);
       expect(recasted).toBe(source);
       expect(invokeKCLRun).toHaveBeenCalledTimes(3);
     });

@@ -16,8 +16,14 @@
 ### Frontend 테스트 (`frontend/__tests__/`)
 
 - **kclEngine.test.ts**: KCL 엔진 추상화 테스트
+- **wasmKclEngine.test.ts**: WASM 기반 KCL 엔진 테스트 (`invokeKCLRun` 결과 파싱 포함)
+- **wasmLoader.test.ts**: KCL WASM 모듈 로더 단위 테스트 (싱글톤/에러/네트워크)
+- **artifactGraph.test.ts**: `ArtifactGraph` 및 `parseKclRunOutput`/`extractMeshes`/`buildArtifactGraphFromGeometry` 유틸 테스트
+- **geometryRuntime.test.ts**: TypeScript 기하 런타임 테스트 (`buildGeometrySpecFromKcl` - KCL 코드 패턴 파싱)
+- **astMapping.test.ts**: AST 노드 ↔ 기하 매핑 유틸 테스트
 - **useKclModel.test.tsx**: KCL 모델 관리 React 훅 테스트
-- **KclPreview3D.test.tsx**: 3D 미리보기 컴포넌트 테스트
+- **KclPreview3D.test.tsx**: 3D 미리보기 컴포넌트 테스트 (Three.js/WebGL 방어 포함, 카메라 핏 및 OrbitControls 통합 테스트)
+- **threeCameraUtils.test.ts**: 카메라 유틸리티 테스트 (bbox 계산 및 카메라 파라미터 계산)
 - **ImageUpload.test.tsx**: 이미지 업로드 컴포넌트 테스트
 - **KclEditor.test.tsx**: KCL 코드 에디터 컴포넌트 테스트
 - **CommandInput.test.tsx**: 명령어 입력 컴포넌트 테스트
@@ -157,12 +163,19 @@ it('should behave in specific way', () => {
 - 잘못된 파일 형식
 - 네트워크 에러 처리
 - API 에러 응답 처리
+- WASM 실행 결과 파싱 실패 및 KCL 구문 에러 처리
+- TypeScript 기하 런타임 에지 케이스:
+  - 빈 KCL 코드
+  - 주석 및 공백 라인 포함 코드
+  - 잘못된 box 정의 (누락된 파라미터, NaN 값)
+  - 매우 큰/작은/음수 크기 값
+  - float 값 처리
+  - 다양한 whitespace 패턴
 
 ## 모킹 및 스텁
 
 ### Backend
 - **LLM Client**: `FakeLLM` 클래스로 실제 API 호출 방지
-- **KCL Runtime**: `_run_cli` 함수를 모킹하여 실제 CLI 호출 방지
 - **Storage**: `InMemoryKclStorage`로 데이터베이스 없이 테스트
 
 ### Frontend
@@ -245,7 +258,9 @@ FastAPI 엔드포인트는 `TestClient`를 사용하여 테스트합니다. 실�
 - **Image Upload to KCL Conversion Flow**: 이미지 업로드부터 에디터 표시까지
 - **KCL Modification Flow**: KCL 코드 수정 및 프리뷰 재생성
 - **Error Handling Integration**: 네트워크 에러 및 서버 에러 처리
-- **Preview Generation Integration**: KCL 코드 변경 시 자동 프리뷰 생성
+- **Preview Generation Integration**: KCL 코드 변경 시 WASM 엔진을 통해 `ArtifactGraph`를 생성하고, 이를 기반으로 자동 프리뷰(메쉬 데이터) 생성
+  - WASM 엔진이 빈 그래프를 반환할 경우, TypeScript 기하 런타임(`buildGeometrySpecFromKcl`)이 KCL 코드 패턴을 파싱하여 fallback으로 기하 데이터 생성
+  - `KclPreview3D` 컴포넌트는 메쉬의 bounding box를 계산하여 자동으로 카메라를 맞추고, OrbitControls를 통해 마우스 인터랙션(회전/줌/팬)을 지원
 
 ## 향후 개선 사항
 

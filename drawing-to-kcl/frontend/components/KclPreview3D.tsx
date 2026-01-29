@@ -1,5 +1,10 @@
 import React, { useEffect, useRef } from 'react';
 import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
+import {
+  computeBoundingBox,
+  computeCameraForBounds,
+} from '../lib/threeCameraUtils';
 
 type MeshPreview = {
   id?: string | null;
@@ -13,6 +18,18 @@ type PreviewLike = {
 
 export interface KclPreview3DProps {
   preview: unknown;
+}
+
+function getFirstRenderableMesh(preview: unknown): MeshPreview | null {
+  const { meshes } = (preview as PreviewLike) ?? {};
+  if (!meshes || meshes.length === 0) {
+    return null;
+  }
+  const meshPreview = meshes[0];
+  if (!meshPreview.vertices || meshPreview.vertices.length === 0) {
+    return null;
+  }
+  return meshPreview;
 }
 
 /**
@@ -29,21 +46,15 @@ export const KclPreview3D: React.FC<KclPreview3DProps> = ({ preview }) => {
   useEffect(() => {
     if (!containerRef.current) return;
 
-    const { meshes } = (preview as PreviewLike) ?? {};
-    if (!meshes || meshes.length === 0) {
-      return;
-    }
-
-    const meshPreview = meshes[0];
-    if (!meshPreview.vertices || meshPreview.vertices.length === 0) {
-      return;
-    }
+    const meshPreview = getFirstRenderableMesh(preview);
+    if (!meshPreview) return;
 
     // Wrap Three.js initialization in try-catch to handle WebGL context failures
     // (e.g., in test environments or when WebGL is not available)
     let renderer: THREE.WebGLRenderer | null = null;
     let geometry: THREE.BufferGeometry | null = null;
     let material: THREE.MeshStandardMaterial | null = null;
+    let controls: OrbitControls | null = null;
     let animationFrameId: number | null = null;
 
     try {
@@ -51,9 +62,24 @@ export const KclPreview3D: React.FC<KclPreview3DProps> = ({ preview }) => {
       const height = containerRef.current.clientHeight || 300;
 
       const scene = new THREE.Scene();
-      const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
-      camera.position.set(2, 2, 2);
-      camera.lookAt(0, 0, 0);
+      
+      // Compute bounding box and camera parameters
+      const bounds = computeBoundingBox(meshPreview.vertices);
+      const aspect = width / height;
+      
+      let camera: THREE.PerspectiveCamera;
+      if (bounds) {
+        // Use computed camera parameters based on bbox
+        const cameraParams = computeCameraForBounds(bounds, aspect);
+        camera = new THREE.PerspectiveCamera(45, aspect, cameraParams.near, cameraParams.far);
+        camera.position.set(...cameraParams.position);
+        camera.lookAt(...cameraParams.lookAt);
+      } else {
+        // Fallback to default camera position if bbox computation fails
+        camera = new THREE.PerspectiveCamera(45, aspect, 0.1, 1000);
+        camera.position.set(2, 2, 2);
+        camera.lookAt(0, 0, 0);
+      }
 
       renderer = new THREE.WebGLRenderer({ antialias: true });
       renderer.setSize(width, height);
@@ -77,9 +103,14 @@ export const KclPreview3D: React.FC<KclPreview3DProps> = ({ preview }) => {
       const mesh = new THREE.Mesh(geometry, material);
       scene.add(mesh);
 
+      // Create OrbitControls for mouse interaction
+      controls = new OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.05;
+
       const animate = () => {
-        if (renderer && mesh) {
-          mesh.rotation.y += 0.01;
+        if (renderer && mesh && controls) {
+          controls.update();
           renderer.render(scene, camera);
           animationFrameId = requestAnimationFrame(animate);
         }
@@ -97,6 +128,9 @@ export const KclPreview3D: React.FC<KclPreview3DProps> = ({ preview }) => {
     return () => {
       if (animationFrameId !== null) {
         cancelAnimationFrame(animationFrameId);
+      }
+      if (controls) {
+        controls.dispose();
       }
       if (renderer) {
         renderer.dispose();

@@ -122,3 +122,15 @@ global.requestAnimationFrame = jest.fn((cb) => {
 
 global.cancelAnimationFrame = jest.fn();
 
+// Mock OrbitControls globally for all tests to avoid importing the ESM module
+jest.mock('three/examples/jsm/controls/OrbitControls', () => {
+  return {
+    OrbitControls: jest.fn().mockImplementation(() => ({
+      enableDamping: false,
+      dampingFactor: 0.05,
+      update: jest.fn(),
+      dispose: jest.fn(),
+    })),
+  };
+});
+

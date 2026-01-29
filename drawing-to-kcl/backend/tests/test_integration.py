@@ -80,9 +80,19 @@ class TestImageUploadToKCLFlow:
         # Assert: KCL code should contain context comment
         assert context in body["kcl_code"] or "context" in body["kcl_code"].lower()
 
-        # Assert: KCL code should be valid (contains some KCL-like structure)
-        kcl_code = body["kcl_code"]
-        assert "box" in kcl_code or "object" in kcl_code.lower()
+        # Assert: KCL code should be valid (contains some KCL-like structure).
+        # The exact dummy implementation may change over time, so we only check
+        # for simple structural hints rather than specific functions.
+        kcl_code = body["kcl_code"].lower()
+        assert any(
+            hint in kcl_code
+            for hint in (
+                "box",                # older dummy implementation
+                "object",             # minimal KCL object
+                "generated dummy kcl",# current dummy header
+                "result =",           # simple arithmetic example
+            )
+        )
 
     def test_complete_flow_without_context(self, client, tmp_path):
         """

@@ -316,6 +316,31 @@ return box1;`;
         return Promise.reject(new Error('Unmocked fetch call'));
       });
 
+      // Arrange: WASM engine returns an artifact graph with a single mesh
+      (invokeKCLRun as jest.Mock)
+        // First call: parse
+        .mockReturnValueOnce('')
+        // Second call: execute → JSON string representing ArtifactGraph
+        .mockReturnValueOnce(
+          JSON.stringify({
+            artifacts: ['solid:box1'],
+            nodes: {
+              'solid:box1': {
+                id: 'solid:box1',
+                type: 'solid',
+                geometry: {
+                  vertices: [
+                    [0, 0, 0],
+                    [1, 0, 0],
+                    [0, 1, 0],
+                  ],
+                  indices: [0, 1, 2],
+                },
+              },
+            },
+          }),
+        );
+
       render(<Page />);
 
       // Act: Upload and convert
@@ -330,11 +355,68 @@ return box1;`;
         expect(loadWasmInstance).toHaveBeenCalled();
       });
 
-      // Assert: Preview section may appear (depending on WASM execution result)
-      // At minimum, editor should be visible
+      // Assert: Preview JSON should contain mesh information derived from ArtifactGraph
       await waitFor(() => {
-        expect(screen.getByLabelText(/kcl editor/i)).toBeInTheDocument();
+        const previewJson = screen.queryByTestId('kcl-preview-json');
+        expect(previewJson).toBeInTheDocument();
+        const jsonText = previewJson?.textContent ?? '';
+        expect(jsonText).toContain('meshes');
+        expect(jsonText).toContain('solid:box1');
       });
+    });
+
+    it('uses TypeScript geometry runtime fallback when WASM returns empty graph', async () => {
+      // Arrange: Mock successful convert with KCL code containing box
+      (global.fetch as jest.Mock).mockImplementation((url) => {
+        if (typeof url === 'string' && url.includes('127.0.0.1:7245')) {
+          return Promise.resolve({ ok: true } as Response);
+        }
+        if (typeof url === 'string' && url.includes('/convert')) {
+          return Promise.resolve(createMockFetchResponse({
+            id: '1',
+            kcl_code: 'let box1 = box(size: [100, 50, 30], center: [0, 0, 0]);',
+          }));
+        }
+        return Promise.reject(new Error('Unmocked fetch call'));
+      });
+
+      // Arrange: WASM engine returns empty graph (no geometry)
+      (invokeKCLRun as jest.Mock)
+        // First call: parse
+        .mockReturnValueOnce('')
+        // Second call: execute → empty artifact graph
+        .mockReturnValueOnce(
+          JSON.stringify({
+            artifacts: [],
+            nodes: {},
+          }),
+        );
+
+      render(<Page />);
+
+      // Act: Upload and convert
+      const fileInput = screen.getByLabelText(/upload drawing image/i) as HTMLInputElement;
+      const file = new File(['dummy'], 'drawing.png', { type: 'image/png' });
+      fireEvent.change(fileInput, { target: { files: [file] } });
+      const convertButton = screen.getByRole('button', { name: /convert to kcl/i });
+      fireEvent.click(convertButton);
+
+      // Assert: Preview should be generated using TypeScript geometry runtime fallback
+      await waitFor(() => {
+        const previewJson = screen.queryByTestId('kcl-preview-json');
+        expect(previewJson).toBeInTheDocument();
+        const jsonText = previewJson?.textContent ?? '';
+        const preview = JSON.parse(jsonText);
+        
+        // Should have meshes with vertices and indices from TS geometry runtime
+        expect(preview.meshes).toBeDefined();
+        expect(preview.meshes.length).toBeGreaterThan(0);
+        expect(preview.meshes[0].vertices).toBeDefined();
+        expect(preview.meshes[0].vertices.length).toBeGreaterThan(0);
+        expect(preview.meshes[0].indices).toBeDefined();
+        expect(preview.meshes[0].indices.length).toBeGreaterThan(0);
+        expect(preview.meshes[0].id).toBe('solid:box1');
+      }, { timeout: 5000 });
     });
   });
 });

@@ -8,6 +8,8 @@ import { CommandInput } from '@/components/CommandInput';
 import { KclPreview3D } from '@/components/KclPreview3D';
 import { ErrorDisplay } from '@/components/ErrorDisplay';
 import { wasmKclEngine } from '@/lib/kclEngine';
+import { extractMeshes, buildArtifactGraphFromGeometry } from '@/lib/types/artifactGraph';
+import { buildGeometrySpecFromKcl } from '@/lib/geometryRuntime';
 import { formatKclError, formatWasmError, formatNetworkError } from '@/lib/errorHandler';
 
 const BACKEND_BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL ?? 'http://localhost:8000';
@@ -41,14 +43,25 @@ export default function Page() {
       // #region agent log
       fetch('http://127.0.0.1:7245/ingest/24a6f8bd-2395-4b39-929f-401c94dc986c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:34',message:'After wasmKclEngine.parse',data:{hasProgram:program !== null},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
       // #endregion
-      const artifactGraph = await wasmKclEngine.execute(program);
+      let artifactGraph = await wasmKclEngine.execute(program);
       
-      // Convert artifactGraph to preview format expected by KclPreview3D
-      // For now, return empty preview as artifactGraph structure needs to be defined
+      // Fallback: If WASM engine returns empty graph, use TypeScript geometry runtime
+      const meshes = extractMeshes(artifactGraph);
+      if (meshes.length === 0 && artifactGraph.artifacts.length === 0) {
+        // Try to generate geometry from KCL code using TypeScript runtime
+        const geometrySpec = buildGeometrySpecFromKcl(code);
+        if (geometrySpec.boxes.length > 0) {
+          artifactGraph = buildArtifactGraphFromGeometry(geometrySpec);
+        }
+      }
+      
+      // Convert artifactGraph to preview format expected by KclPreview3D.
+      // We extract meshes from the graph and expose a simple preview object.
+      const finalMeshes = extractMeshes(artifactGraph);
       setPreview({
-        artifacts: [],
+        artifacts: artifactGraph.artifacts,
         bbox: null,
-        meshes: [],
+        meshes: finalMeshes,
       });
     } catch (err) {
       // #region agent log

@@ -68,7 +68,8 @@ class DummyLLMClient(LLMClient):
 a = 1
 b = 2
 result = a + b
-result"""
+result
+# geom: let box1 = box(size: [100, 50, 30], center: [0, 0, 0]);"""
         return comment + dummy_kcl
 
     async def modify_kcl_with_command(self, kcl_code: str, command: str) -> str:

@@ -85,6 +85,33 @@ npm run dev
 
 The app will be available at `http://localhost:3000`.
 
+### KCL WASM & 3D Preview
+
+The frontend uses the `@kcl-lang/wasm-lib` package together with a bundled
+`kcl.wasm` (located in `frontend/public/kcl.wasm`) to execute KCL code
+directly in the browser. The high-level flow is:
+
+- User uploads an image → backend returns KCL code
+- Frontend calls the WASM engine (`wasmKclEngine.execute`) with that code
+- The raw WASM result is parsed into an `ArtifactGraph`
+- **TypeScript Geometry Runtime Fallback**: If the WASM engine returns an empty graph (no geometry), a TypeScript-side geometry runtime (`buildGeometrySpecFromKcl`) parses KCL code patterns (e.g., `box(size: [...], center: [...])`) and generates geometry using `buildArtifactGraphFromGeometry`
+- The `ArtifactGraph` is converted into mesh data (`vertices`/`indices`)
+- `KclPreview3D` renders the meshes using Three.js with automatic camera fitting and OrbitControls for mouse interaction
+
+**Camera Fitting**: The preview automatically calculates the bounding box of all meshes and positions the camera to frame the entire model optimally. This ensures the geometry is always visible and well-framed regardless of its size or position.
+
+**Mouse Interaction**: Users can interact with the 3D preview using OrbitControls:
+- **Drag**: Rotate the camera around the model
+- **Scroll/Wheel**: Zoom in and out
+- **Right-click drag** (if enabled): Pan the view
+
+**Supported KCL Patterns**: The TypeScript geometry runtime currently supports parsing `box()` function calls with `size` and `center` parameters. This allows the preview to show 3D geometry even when the WASM engine doesn't return geometry data yet.
+
+**Future Enhancement**: This TypeScript layer can be swapped for real KCL geometry API output when the KCL WASM runtime provides geometry data directly.
+
+If WASM/WebGL is not available (for example in some test environments),
+`KclPreview3D` fails gracefully and simply leaves the preview area empty.
+
 ### Run frontend tests
 
 ```bash
