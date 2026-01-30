@@ -18,18 +18,11 @@ export const ErrorDisplay: React.FC<ErrorDisplayProps> = ({ error, className }) 
 
   return (
     <div
-      className={className}
       role="alert"
       aria-live="polite"
-      style={{
-        padding: '1rem',
-        backgroundColor: '#fee',
-        border: '1px solid #fcc',
-        borderRadius: '4px',
-        color: '#c33',
-      }}
+      className={`rounded border border-red-900/50 bg-red-950/80 px-3 py-2 text-sm text-red-200 ${className ?? ''}`}
     >
-      <strong>Error:</strong> {error}
+      <strong className="font-medium">Error:</strong> {error}
     </div>
   );
 };

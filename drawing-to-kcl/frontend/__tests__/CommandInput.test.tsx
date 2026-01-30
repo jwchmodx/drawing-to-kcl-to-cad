@@ -84,5 +84,21 @@ describe('CommandInput', () => {
     expect(handleSubmit).toHaveBeenCalledTimes(1);
     expect(handleSubmit).toHaveBeenCalledWith(specialCommand);
   });
+
+  it('shows attach file button when onAttachFile is provided', () => {
+    const onAttachFile = jest.fn();
+    render(<CommandInput onSubmit={jest.fn()} onAttachFile={onAttachFile} />);
+    expect(screen.getByRole('button', { name: /attach file/i })).toBeInTheDocument();
+  });
+
+  it('calls onAttachFile when user selects a file via attach button', () => {
+    const onAttachFile = jest.fn();
+    render(<CommandInput onSubmit={jest.fn()} onAttachFile={onAttachFile} />);
+    const fileInput = screen.getByTestId('attach-file-input') as HTMLInputElement;
+    const file = new File(['image'], 'drawing.png', { type: 'image/png' });
+    fireEvent.change(fileInput, { target: { files: [file] } });
+    expect(onAttachFile).toHaveBeenCalledTimes(1);
+    expect(onAttachFile).toHaveBeenCalledWith(file);
+  });
 });
 

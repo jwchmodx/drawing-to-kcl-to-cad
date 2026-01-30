@@ -81,11 +81,10 @@ return box1;`;
       render(<Page />);
 
       // Act: Upload image
-      const fileInput = screen.getByLabelText(/upload drawing image/i) as HTMLInputElement;
+      const fileInput = screen.getByTestId('attach-file-input') as HTMLInputElement;
       const file = new File(['dummy'], 'drawing.png', { type: 'image/png' });
       fireEvent.change(fileInput, { target: { files: [file] } });
-      const convertButton = screen.getByRole('button', { name: /convert to kcl/i });
-      fireEvent.click(convertButton);
+      // Attach file triggers convert
 
       // Assert: Should call convert endpoint
       await waitFor(() => {
@@ -132,11 +131,10 @@ return box1;`;
       render(<Page />);
 
       // Act: Upload image
-      const fileInput = screen.getByLabelText(/upload drawing image/i) as HTMLInputElement;
+      const fileInput = screen.getByTestId('attach-file-input') as HTMLInputElement;
       const file = new File(['dummy'], 'door.png', { type: 'image/png' });
       fireEvent.change(fileInput, { target: { files: [file] } });
-      const convertButton = screen.getByRole('button', { name: /convert to kcl/i });
-      fireEvent.click(convertButton);
+      // Attach file triggers convert
 
       // Assert: Should display KCL code with context
       const editor = await screen.findByLabelText(/kcl editor/i);
@@ -174,11 +172,10 @@ return box1;`;
       render(<Page />);
 
       // Act: First convert
-      const fileInput = screen.getByLabelText(/upload drawing image/i) as HTMLInputElement;
+      const fileInput = screen.getByTestId('attach-file-input') as HTMLInputElement;
       const file = new File(['dummy'], 'drawing.png', { type: 'image/png' });
       fireEvent.change(fileInput, { target: { files: [file] } });
-      const convertButton = screen.getByRole('button', { name: /convert to kcl/i });
-      fireEvent.click(convertButton);
+      // Attach file triggers convert
 
       await waitFor(() => {
         expect(screen.getByLabelText(/kcl editor/i)).toBeInTheDocument();
@@ -226,11 +223,10 @@ return box1;`;
       render(<Page />);
 
       // Act: Try to upload
-      const fileInput = screen.getByLabelText(/upload drawing image/i) as HTMLInputElement;
+      const fileInput = screen.getByTestId('attach-file-input') as HTMLInputElement;
       const file = new File(['dummy'], 'drawing.png', { type: 'image/png' });
       fireEvent.change(fileInput, { target: { files: [file] } });
-      const convertButton = screen.getByRole('button', { name: /convert to kcl/i });
-      fireEvent.click(convertButton);
+      // Attach file triggers convert
 
       // Assert: Should handle error gracefully
       await waitFor(() => {
@@ -243,7 +239,7 @@ return box1;`;
         const errorDisplay = screen.queryByText(/network error|unable to connect/i);
         // Error may be displayed or component may handle it silently
         // At minimum, component should not crash
-        expect(screen.getByLabelText(/upload drawing image/i)).toBeInTheDocument();
+        expect(screen.getByTestId('attach-file-input')).toBeInTheDocument();
       });
     });
 
@@ -273,11 +269,10 @@ return box1;`;
       render(<Page />);
 
       // Act: Convert first
-      const fileInput = screen.getByLabelText(/upload drawing image/i) as HTMLInputElement;
+      const fileInput = screen.getByTestId('attach-file-input') as HTMLInputElement;
       const file = new File(['dummy'], 'drawing.png', { type: 'image/png' });
       fireEvent.change(fileInput, { target: { files: [file] } });
-      const convertButton = screen.getByRole('button', { name: /convert to kcl/i });
-      fireEvent.click(convertButton);
+      // Attach file triggers convert
 
       await waitFor(() => {
         expect(screen.getByLabelText(/kcl editor/i)).toBeInTheDocument();
@@ -344,11 +339,10 @@ return box1;`;
       render(<Page />);
 
       // Act: Upload and convert
-      const fileInput = screen.getByLabelText(/upload drawing image/i) as HTMLInputElement;
+      const fileInput = screen.getByTestId('attach-file-input') as HTMLInputElement;
       const file = new File(['dummy'], 'drawing.png', { type: 'image/png' });
       fireEvent.change(fileInput, { target: { files: [file] } });
-      const convertButton = screen.getByRole('button', { name: /convert to kcl/i });
-      fireEvent.click(convertButton);
+      // Attach file triggers convert
 
       // Assert: WASM engine should be called for preview generation
       await waitFor(() => {
@@ -395,11 +389,10 @@ return box1;`;
       render(<Page />);
 
       // Act: Upload and convert
-      const fileInput = screen.getByLabelText(/upload drawing image/i) as HTMLInputElement;
+      const fileInput = screen.getByTestId('attach-file-input') as HTMLInputElement;
       const file = new File(['dummy'], 'drawing.png', { type: 'image/png' });
       fireEvent.change(fileInput, { target: { files: [file] } });
-      const convertButton = screen.getByRole('button', { name: /convert to kcl/i });
-      fireEvent.click(convertButton);
+      // Attach file triggers convert
 
       // Assert: Preview should be generated using TypeScript geometry runtime fallback
       await waitFor(() => {

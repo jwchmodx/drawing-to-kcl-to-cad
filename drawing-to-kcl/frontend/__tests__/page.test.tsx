@@ -21,6 +21,15 @@ jest.mock('@kcl-lang/wasm-lib', () => ({
 describe('Main Page integration', () => {
   const mockInstance = { instance: 'wasm-instance' };
 
+  describe('Cursor-style layout', () => {
+    it('renders three panels (left, center, right)', () => {
+      render(<Page />);
+      expect(screen.getByTestId('panel-left')).toBeInTheDocument();
+      expect(screen.getByTestId('panel-center')).toBeInTheDocument();
+      expect(screen.getByTestId('panel-right')).toBeInTheDocument();
+    });
+  });
+
   // Helper to filter out logging fetch calls
   const getApiCalls = (endpoint?: string) => {
     return (global.fetch as jest.Mock).mock.calls.filter(
@@ -76,13 +85,11 @@ describe('Main Page integration', () => {
 
     render(<Page />);
 
-    const fileInput = screen.getByLabelText(/upload drawing image/i) as HTMLInputElement;
+    const fileInput = screen.getByTestId('attach-file-input') as HTMLInputElement;
     const file = new File(['dummy'], 'drawing.png', { type: 'image/png' });
 
-    // Act: Upload image and convert
+    // Act: Attach file from chat (triggers convert)
     fireEvent.change(fileInput, { target: { files: [file] } });
-    const convertButton = screen.getByRole('button', { name: /convert to kcl/i });
-    fireEvent.click(convertButton);
 
     // Assert: Should call API and display results
     await waitFor(() => {
@@ -98,7 +105,7 @@ describe('Main Page integration', () => {
     );
     expect(convertCalls[0][0]).toMatch(/\/convert$/);
 
-    const editor = await screen.findByLabelText(/kcl editor/i);
+    const editor = await screen.findByLabelText(/kcl editor/i, { timeout: 3000 });
     expect((editor as HTMLTextAreaElement).value).toContain('kcl_from_test();');
 
     // Assert: WASM engine should be called to generate preview
@@ -153,11 +160,10 @@ describe('Main Page integration', () => {
     render(<Page />);
 
     // Act: First convert an image
-    const fileInput = screen.getByLabelText(/upload drawing image/i) as HTMLInputElement;
+    const fileInput = screen.getByTestId('attach-file-input') as HTMLInputElement;
     const file = new File(['dummy'], 'drawing.png', { type: 'image/png' });
     fireEvent.change(fileInput, { target: { files: [file] } });
-    const convertButton = screen.getByRole('button', { name: /convert to kcl/i });
-    fireEvent.click(convertButton);
+    // Attach file triggers convert (no separate button)
 
     const editor = await screen.findByLabelText(/kcl editor/i);
     expect((editor as HTMLTextAreaElement).value).toContain('initial_kcl();');
@@ -206,13 +212,12 @@ describe('Main Page integration', () => {
 
     render(<Page />);
 
-    const fileInput = screen.getByLabelText(/upload drawing image/i) as HTMLInputElement;
+    const fileInput = screen.getByTestId('attach-file-input') as HTMLInputElement;
     const file = new File(['dummy'], 'drawing.png', { type: 'image/png' });
 
     fireEvent.change(fileInput, { target: { files: [file] } });
 
-    const convertButton = screen.getByRole('button', { name: /convert to kcl/i });
-    fireEvent.click(convertButton);
+    // Attach file triggers convert (no separate button)
 
     // Assert: Should handle error gracefully (component may show error or not update)
     await waitFor(() => {
@@ -221,7 +226,7 @@ describe('Main Page integration', () => {
     });
     // Component should not crash - KclEditor may not be rendered if kclCode is empty
     // which is expected behavior when API fails
-    expect(screen.getByLabelText(/upload drawing image/i)).toBeInTheDocument();
+    expect(screen.getByTestId('attach-file-input')).toBeInTheDocument();
   });
 
   it('handles network failure on convert', async () => {
@@ -237,15 +242,11 @@ describe('Main Page integration', () => {
 
     render(<Page />);
 
-    const fileInput = screen.getByLabelText(/upload drawing image/i) as HTMLInputElement;
+    const fileInput = screen.getByTestId('attach-file-input') as HTMLInputElement;
     const file = new File(['dummy'], 'drawing.png', { type: 'image/png' });
 
+    // Act: Attach file (triggers convert, will trigger network error)
     fireEvent.change(fileInput, { target: { files: [file] } });
-
-    const convertButton = screen.getByRole('button', { name: /convert to kcl/i });
-    
-    // Act: Click convert (will trigger network error, but should be caught)
-    fireEvent.click(convertButton);
 
     // Assert: Should handle network error gracefully
     await waitFor(() => {
@@ -254,7 +255,7 @@ describe('Main Page integration', () => {
     });
     // Component should not crash - KclEditor may not be rendered if kclCode is empty
     // which is expected behavior when API fails
-    expect(screen.getByLabelText(/upload drawing image/i)).toBeInTheDocument();
+    expect(screen.getByTestId('attach-file-input')).toBeInTheDocument();
   });
 
   it('handles response without preview field', async () => {
@@ -277,13 +278,12 @@ describe('Main Page integration', () => {
 
     render(<Page />);
 
-    const fileInput = screen.getByLabelText(/upload drawing image/i) as HTMLInputElement;
+    const fileInput = screen.getByTestId('attach-file-input') as HTMLInputElement;
     const file = new File(['dummy'], 'drawing.png', { type: 'image/png' });
 
     fireEvent.change(fileInput, { target: { files: [file] } });
 
-    const convertButton = screen.getByRole('button', { name: /convert to kcl/i });
-    fireEvent.click(convertButton);
+    // Attach file triggers convert (no separate button)
 
     // Assert: Should handle missing preview
     await waitFor(() => {
@@ -317,11 +317,10 @@ describe('Main Page integration', () => {
 
     render(<Page />);
 
-    const fileInput = screen.getByLabelText(/upload drawing image/i) as HTMLInputElement;
+    const fileInput = screen.getByTestId('attach-file-input') as HTMLInputElement;
     const file = new File(['dummy'], 'drawing.png', { type: 'image/png' });
     fireEvent.change(fileInput, { target: { files: [file] } });
-    const convertButton = screen.getByRole('button', { name: /convert to kcl/i });
-    fireEvent.click(convertButton);
+    // Attach file triggers convert (no separate button)
 
     await waitFor(() => {
       expect(screen.getByLabelText(/kcl editor/i)).toBeInTheDocument();
@@ -356,15 +355,10 @@ describe('Main Page integration', () => {
 
     render(<Page />);
 
-    const fileInput = screen.getByLabelText(/upload drawing image/i) as HTMLInputElement;
+    const fileInput = screen.getByTestId('attach-file-input') as HTMLInputElement;
     const file = new File(['dummy'], 'drawing.png', { type: 'image/png' });
 
     fireEvent.change(fileInput, { target: { files: [file] } });
-
-    const convertButton = screen.getByRole('button', { name: /convert to kcl/i });
-    
-    // Act: Click convert (will trigger CORS error, but should be caught)
-    fireEvent.click(convertButton);
 
     // Assert: Should handle CORS error gracefully
     await waitFor(() => {
@@ -375,7 +369,7 @@ describe('Main Page integration', () => {
       expect(convertCalls.length).toBeGreaterThan(0);
     }, { timeout: 3000 });
     // Component should not crash - error should be displayed
-    expect(screen.getByLabelText(/upload drawing image/i)).toBeInTheDocument();
+    expect(screen.getByTestId('attach-file-input')).toBeInTheDocument();
   });
 
   it('handles network failure on modify', async () => {
@@ -400,11 +394,10 @@ describe('Main Page integration', () => {
 
     render(<Page />);
 
-    const fileInput = screen.getByLabelText(/upload drawing image/i) as HTMLInputElement;
+    const fileInput = screen.getByTestId('attach-file-input') as HTMLInputElement;
     const file = new File(['dummy'], 'drawing.png', { type: 'image/png' });
     fireEvent.change(fileInput, { target: { files: [file] } });
-    const convertButton = screen.getByRole('button', { name: /convert to kcl/i });
-    fireEvent.click(convertButton);
+    // Attach file triggers convert (no separate button)
 
     await waitFor(() => {
       expect(screen.getByLabelText(/kcl editor/i)).toBeInTheDocument();
@@ -443,13 +436,12 @@ describe('Main Page integration', () => {
 
     render(<Page />);
 
-    const fileInput = screen.getByLabelText(/upload drawing image/i) as HTMLInputElement;
+    const fileInput = screen.getByTestId('attach-file-input') as HTMLInputElement;
     const file = new File(['dummy'], 'drawing.png', { type: 'image/png' });
 
     // Act: Select file and click convert button
     fireEvent.change(fileInput, { target: { files: [file] } });
-    const convertButton = screen.getByRole('button', { name: /convert to kcl/i });
-    fireEvent.click(convertButton);
+    // Attach file triggers convert (no separate button)
 
     // Assert: Fetch should be called (may be called multiple times due to logging)
     await waitFor(() => {
@@ -461,7 +453,7 @@ describe('Main Page integration', () => {
     }, { timeout: 3000 });
     
     // Component should not crash - error should be displayed
-    expect(screen.getByLabelText(/upload drawing image/i)).toBeInTheDocument();
+    expect(screen.getByTestId('attach-file-input')).toBeInTheDocument();
   });
 });
 

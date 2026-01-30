@@ -26,7 +26,9 @@
 - **threeCameraUtils.test.ts**: 카메라 유틸리티 테스트 (bbox 계산 및 카메라 파라미터 계산)
 - **ImageUpload.test.tsx**: 이미지 업로드 컴포넌트 테스트
 - **KclEditor.test.tsx**: KCL 코드 에디터 컴포넌트 테스트
-- **CommandInput.test.tsx**: 명령어 입력 컴포넌트 테스트
+- **CommandInput.test.tsx**: 명령어 입력 컴포넌트 테스트 (파일 첨부 onAttachFile 포함)
+- **PanelResizer.test.tsx**: 패널 리사이저 드래그 테스트 (onDrag, deltaX)
+- **layoutPanels.test.tsx**: 3열 레이아웃, 패널 토글, 리사이저 존재, 프리뷰 flex-1, 채팅 첨부 버튼
 - **page.test.tsx**: 메인 페이지 통합 테스트
 - **integration.test.tsx**: 전체 프론트엔드 플로우 통합 테스트
 - **errorHandling.test.tsx**: 에러 처리 유틸리티 및 컴포넌트 테스트
