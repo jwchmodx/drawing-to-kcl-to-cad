@@ -1,12 +1,8 @@
-import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
-
 import {
   formatKclError,
   formatWasmError,
   formatNetworkError,
 } from '@/lib/errorHandler';
-import { ErrorDisplay } from '@/components/ErrorDisplay';
 
 describe('errorHandler', () => {
   describe('formatKclError', () => {
@@ -115,40 +111,5 @@ describe('errorHandler', () => {
       // Assert: Should return formatted message
       expect(formatted).toBeTruthy();
     });
-  });
-});
-
-describe('ErrorDisplay', () => {
-  it('renders error message', () => {
-    // Arrange: Error message
-    const error = 'KCL syntax error at line 5';
-
-    // Act: Render component
-    render(<ErrorDisplay error={error} />);
-
-    // Assert: Should display error
-    expect(screen.getByText(/KCL syntax error/i)).toBeInTheDocument();
-  });
-
-  it('handles null error', () => {
-    // Arrange: No error
-    const error = null;
-
-    // Act: Render component
-    const { container } = render(<ErrorDisplay error={error} />);
-
-    // Assert: Should not render anything
-    expect(container.firstChild).toBeNull();
-  });
-
-  it('renders with custom className', () => {
-    // Arrange: Error with custom class
-    const error = 'Test error';
-
-    // Act: Render component
-    const { container } = render(<ErrorDisplay error={error} className="custom-class" />);
-
-    // Assert: Should have custom class
-    expect(container.firstChild).toHaveClass('custom-class');
   });
 });

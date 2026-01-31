@@ -54,6 +54,8 @@ export const KclPreview3D: React.FC<KclPreview3DProps> = ({ preview }) => {
     let renderer: THREE.WebGLRenderer | null = null;
     let geometry: THREE.BufferGeometry | null = null;
     let material: THREE.MeshStandardMaterial | null = null;
+    let sphereGeom: THREE.SphereGeometry | null = null;
+    let sphereMat: THREE.MeshBasicMaterial | null = null;
     let controls: OrbitControls | null = null;
     let animationFrameId: number | null = null;
 
@@ -62,11 +64,11 @@ export const KclPreview3D: React.FC<KclPreview3DProps> = ({ preview }) => {
       const height = containerRef.current.clientHeight || 300;
 
       const scene = new THREE.Scene();
-      
+
       // Compute bounding box and camera parameters
       const bounds = computeBoundingBox(meshPreview.vertices);
       const aspect = width / height;
-      
+
       let camera: THREE.PerspectiveCamera;
       if (bounds) {
         // Use computed camera parameters based on bbox
@@ -99,19 +101,62 @@ export const KclPreview3D: React.FC<KclPreview3DProps> = ({ preview }) => {
       }
       geometry.computeVertexNormals();
 
-      material = new THREE.MeshStandardMaterial({ color: 0xff8800, flatShading: false });
+      material = new THREE.MeshStandardMaterial({
+        color: 0xff8800,
+        flatShading: false,
+        side: THREE.DoubleSide, // Render both sides so back-facing faces are lit (avoids black triangles)
+      });
       const mesh = new THREE.Mesh(geometry, material);
       scene.add(mesh);
+
+      // AxesHelper: fixed at bottom-right, orientation syncs with main camera
+      const axesScene = new THREE.Scene();
+      const axesSize = 80;
+      const axesGroup = new THREE.Group();
+      const axesHelper = new THREE.AxesHelper(1);
+      axesHelper.setColors(
+        new THREE.Color(0xff0000), // X = red
+        new THREE.Color(0x00ff00), // Y = green
+        new THREE.Color(0x0088ff)  // Z = blue
+      );
+      axesHelper.scale.setScalar(0.5);
+      axesGroup.add(axesHelper);
+      sphereGeom = new THREE.SphereGeometry(0.05, 16, 16);
+      sphereMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+      const sphere = new THREE.Mesh(sphereGeom, sphereMat);
+      axesGroup.add(sphere);
+      axesScene.add(axesGroup);
+      const axesCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
+      axesCamera.position.set(0.8, 0.8, 1.5);
+      axesCamera.lookAt(0, 0, 0);
 
       // Create OrbitControls for mouse interaction
       controls = new OrbitControls(camera, renderer.domElement);
       controls.enableDamping = true;
       controls.dampingFactor = 0.05;
 
+      const GIZMO_MARGIN = 16;
       const animate = () => {
-        if (renderer && mesh && controls) {
+        if (renderer && mesh && controls && containerRef.current) {
+          const w = containerRef.current.clientWidth || width;
+          const h = containerRef.current.clientHeight || height;
+          if (renderer.domElement.width !== w || renderer.domElement.height !== h) {
+            renderer.setSize(w, h);
+            camera.aspect = w / h;
+            camera.updateProjectionMatrix();
+          }
           controls.update();
+          // Sync axes orientation with main camera (so they rotate as you orbit)
+          axesGroup.quaternion.copy(camera.quaternion);
           renderer.render(scene, camera);
+          // Axes overlay: fixed bottom-right
+          renderer.setViewport(w - axesSize - GIZMO_MARGIN, GIZMO_MARGIN, axesSize, axesSize);
+          renderer.setScissor(w - axesSize - GIZMO_MARGIN, GIZMO_MARGIN, axesSize, axesSize);
+          renderer.setScissorTest(true);
+          renderer.clearDepth(); // clear depth so axes render on top
+          renderer.render(axesScene, axesCamera);
+          renderer.setScissorTest(false);
+          renderer.setViewport(0, 0, w, h);
           animationFrameId = requestAnimationFrame(animate);
         }
       };
@@ -141,6 +186,12 @@ export const KclPreview3D: React.FC<KclPreview3DProps> = ({ preview }) => {
       if (material) {
         material.dispose();
       }
+      if (sphereGeom) {
+        sphereGeom.dispose();
+      }
+      if (sphereMat) {
+        sphereMat.dispose();
+      }
       if (containerRef.current) {
         containerRef.current.innerHTML = '';
       }
@@ -149,4 +200,3 @@ export const KclPreview3D: React.FC<KclPreview3DProps> = ({ preview }) => {
 
   return <div ref={containerRef} className="w-full h-full min-h-0" data-testid="kcl-preview-3d" />;
 };
-

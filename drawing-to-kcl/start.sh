@@ -2,6 +2,11 @@
 
 # Start script for Drawing to KCL application
 # Starts both backend and frontend servers
+# If invoked with sh (e.g. sh start.sh), re-exec with bash so BASH_SOURCE and trap work.
+
+if [ -z "${BASH_VERSION:-}" ]; then
+    exec /bin/bash "$0" "$@"
+fi
 
 set -e
 
