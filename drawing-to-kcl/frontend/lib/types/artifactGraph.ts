@@ -7,7 +7,7 @@ import { filletBoxEdge, filletAllBoxEdges, getBoxEdges, type EdgeInfo } from '@/
 import { union, subtract, intersect, type BooleanOperation } from '@/lib/booleanEngine';
 import { revolve } from '@/lib/revolveEngine';
 import { linearPattern, circularPattern } from '@/lib/patternEngine';
-import { shellBox } from '@/lib/shellEngine';
+import { shellBoxSimple } from '@/lib/shellBoxSimple';
 
 export interface ArtifactGraph {
   artifacts: string[];
@@ -617,14 +617,12 @@ export function buildArtifactGraphFromGeometry(spec: GeometrySpec): ArtifactGrap
       // Only support box shell for now
       if ('size' in sourceNode.spec) {
         const boxSpec = sourceNode.spec as BoxSpec;
-        const result = shellBox(
+        const result = shellBoxSimple(
           boxSpec.size,
           boxSpec.center,
           sh.thickness,
           sh.openFaces || []
         );
-        
-        // Shell result logging removed
         
         if (result.vertices.length > 0 && result.indices.length > 0) {
           sourceNode.geometry = { vertices: result.vertices, indices: result.indices };
