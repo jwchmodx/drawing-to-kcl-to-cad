@@ -473,9 +473,11 @@ interface ViewportProps {
   preview: { meshes: { id?: string | null; vertices: [number, number, number][]; indices: number[] }[] } | null;
   onApplyOperation?: (operation: string, params: Record<string, number | string>) => void;
   onSketchComplete?: (kclCode: string) => void;
+  preview3DRef?: React.RefObject<KclPreview3DRef>;
+  currentView?: ViewType;
 }
 
-function Viewport({ preview, onApplyOperation, onSketchComplete }: ViewportProps) {
+function Viewport({ preview, onApplyOperation, onSketchComplete, preview3DRef, currentView }: ViewportProps) {
   const [activeTool, setActiveTool] = useState('select');
   const [editMode, setEditMode] = useState(false);
   const [selectedFace, setSelectedFace] = useState<FaceSelection | null>(null);
@@ -799,6 +801,46 @@ function Viewport({ preview, onApplyOperation, onSketchComplete }: ViewportProps
         </div>
       )}
 
+      {/* Measurement Mode Indicator */}
+      {measurement.state.isActive && !isSketchMode && (
+        <div className="absolute top-4 left-4 bg-cyan/20 border border-cyan/30 rounded-lg px-3 py-1.5 z-10">
+          <span className="text-xs font-medium text-cyan">MEASURE MODE</span>
+          <span className="text-xs text-text-muted ml-2">
+            {measurement.state.mode === 'distance' && 'Click two points'}
+            {measurement.state.mode === 'angle' && 'Click three points'}
+            {measurement.state.mode === 'area' && 'Click a face'}
+            {measurement.state.mode === 'volume' && 'Click an object'}
+            {measurement.state.mode === 'none' && 'Select a measurement type'}
+          </span>
+        </div>
+      )}
+
+      {/* Measurement Panel */}
+      {showMeasurePanel && !isSketchMode && (
+        <div className="absolute top-20 left-4 bg-surface/95 backdrop-blur-xl border border-white/10 rounded-xl p-4 z-10 w-72">
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-xs text-text-muted uppercase tracking-wider">Measurements</div>
+            <button 
+              onClick={() => setShowMeasurePanel(false)}
+              className="p-1 text-text-dim hover:text-text transition-colors"
+            >
+              <Icon name="close" className="text-base" />
+            </button>
+          </div>
+          <MeasureToolbar
+            mode={measurement.state.mode}
+            onModeChange={measurement.setMode}
+            measurements={measurement.state.measurements}
+            onDeleteMeasurement={measurement.deleteMeasurement}
+            onClearAll={measurement.clearAllMeasurements}
+            unit={measurement.state.unit}
+            onUnitChange={measurement.setUnit}
+            pendingPointCount={measurement.state.pendingPoints.length}
+            disabled={!hasPreview}
+          />
+        </div>
+      )}
+
       {/* Viewport / Sketch Canvas */}
       <div className="flex-1 relative overflow-hidden viewport-grid flex items-center justify-center">
         {isSketchMode ? (
@@ -817,6 +859,7 @@ function Viewport({ preview, onApplyOperation, onSketchComplete }: ViewportProps
         ) : hasPreview ? (
           <div className="w-full h-full">
             <KclPreview3D 
+              ref={preview3DRef}
               preview={preview} 
               editMode={editMode}
               selectedFace={selectedFace}
