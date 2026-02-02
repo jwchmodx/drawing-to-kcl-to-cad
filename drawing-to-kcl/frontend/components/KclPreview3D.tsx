@@ -35,6 +35,12 @@ export interface KclPreview3DRef {
   focusOnSelection: () => void;
   resetCamera: () => void;
   getCurrentView: () => ViewType;
+  /** Update material for a specific mesh */
+  updateMeshMaterial: (meshId: string) => void;
+  /** Update all mesh materials from the material engine */
+  refreshMaterials: () => void;
+  /** Live update material properties on a mesh (for preview) */
+  updateMaterialLive: (meshId: string, properties: Partial<MaterialProperties>) => void;
 }
 
 export interface KclPreview3DProps {
@@ -44,6 +50,12 @@ export interface KclPreview3DProps {
   editMode?: boolean;
   showSectionControls?: boolean;
   onViewChange?: (view: ViewType) => void;
+  /** Enable material system integration */
+  enableMaterials?: boolean;
+  /** Callback when mesh selection changes (for material panel) */
+  onMeshSelect?: (meshId: string | null) => void;
+  /** Material engine instance (uses singleton if not provided) */
+  materialEngine?: MaterialEngine;
 }
 
 function getAllRenderableMeshes(preview: unknown): MeshPreview[] {
@@ -64,7 +76,12 @@ export const KclPreview3D = forwardRef<KclPreview3DRef, KclPreview3DProps>(({
   editMode = false,
   showSectionControls = true,
   onViewChange,
+  enableMaterials = true,
+  onMeshSelect,
+  materialEngine: providedMaterialEngine,
 }, ref) => {
+  // Material engine (use provided or singleton)
+  const materialEngine = providedMaterialEngine ?? getMaterialEngine();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const boundsRef = useRef<BoundingBox | null>(null);
   const currentViewRef = useRef<ViewType>('perspective');
@@ -154,13 +171,70 @@ export const KclPreview3D = forwardRef<KclPreview3DRef, KclPreview3DProps>(({
     return currentViewRef.current;
   }, []);
 
+  // Material update functions
+  const updateMeshMaterial = useCallback((meshId: string) => {
+    if (!sceneRef.current || !enableMaterials || !materialEngine) return;
+    
+    const mesh = sceneRef.current.meshes.find(m => m.userData.meshId === meshId);
+    if (mesh) {
+      const newMaterial = materialEngine.getMaterialForMesh(meshId);
+      newMaterial.flatShading = true;
+      if (mesh.material instanceof THREE.Material) {
+        mesh.material.dispose();
+      }
+      mesh.material = newMaterial;
+    }
+  }, [enableMaterials, materialEngine]);
+
+  const refreshMaterials = useCallback(() => {
+    if (!sceneRef.current || !enableMaterials || !materialEngine) return;
+    
+    sceneRef.current.meshes.forEach(mesh => {
+      const meshId = mesh.userData.meshId;
+      if (meshId) {
+        const newMaterial = materialEngine.getMaterialForMesh(meshId);
+        newMaterial.flatShading = true;
+        if (mesh.material instanceof THREE.Material) {
+          mesh.material.dispose();
+        }
+        mesh.material = newMaterial;
+      }
+    });
+  }, [enableMaterials, materialEngine]);
+
+  const updateMaterialLive = useCallback((meshId: string, properties: Partial<MaterialProperties>) => {
+    if (!sceneRef.current) return;
+    
+    const mesh = sceneRef.current.meshes.find(m => m.userData.meshId === meshId);
+    if (mesh && mesh.material instanceof THREE.MeshStandardMaterial) {
+      if (properties.color !== undefined) {
+        mesh.material.color.set(properties.color);
+      }
+      if (properties.metalness !== undefined) {
+        mesh.material.metalness = properties.metalness;
+      }
+      if (properties.roughness !== undefined) {
+        mesh.material.roughness = properties.roughness;
+      }
+      if (properties.opacity !== undefined) {
+        mesh.material.opacity = properties.opacity;
+        mesh.material.transparent = properties.opacity < 1;
+        mesh.material.depthWrite = properties.opacity >= 1;
+      }
+      mesh.material.needsUpdate = true;
+    }
+  }, []);
+
   // Expose methods via ref
   useImperativeHandle(ref, () => ({
     setView,
     focusOnSelection,
     resetCamera,
     getCurrentView,
-  }), [setView, focusOnSelection, resetCamera, getCurrentView]);
+    updateMeshMaterial,
+    refreshMaterials,
+    updateMaterialLive,
+  }), [setView, focusOnSelection, resetCamera, getCurrentView, updateMeshMaterial, refreshMaterials, updateMaterialLive]);
 
   // Section state management
   const [sectionState, setSectionState] = useState<SectionEngineState>(createDefaultSectionState());
@@ -251,15 +325,17 @@ export const KclPreview3D = forwardRef<KclPreview3DRef, KclPreview3DProps>(({
         };
         
         onFaceSelect(selection);
+        onMeshSelect?.(meshId);
         
         // Highlight selected face
         highlightFace(scene, hit.object as THREE.Mesh, faceIndex);
       }
     } else {
       onFaceSelect(null);
+      onMeshSelect?.(null);
       clearHighlight(scene);
     }
-  }, [editMode, onFaceSelect]);
+  }, [editMode, onFaceSelect, onMeshSelect]);
 
   // Highlight a specific face
   const highlightFace = (scene: THREE.Scene, mesh: THREE.Mesh, faceIndex: number) => {
@@ -339,6 +415,7 @@ export const KclPreview3D = forwardRef<KclPreview3DRef, KclPreview3DProps>(({
       // Compute combined bounding box
       const allVertices = meshPreviews.flatMap(m => m.vertices);
       const bounds = computeBoundingBox(allVertices);
+      boundsRef.current = bounds; // Store for view functions
       const aspect = width / height;
       
       let camera: THREE.PerspectiveCamera;
@@ -384,16 +461,25 @@ export const KclPreview3D = forwardRef<KclPreview3DRef, KclPreview3DProps>(({
         geometry.computeVertexNormals();
         geometries.push(geometry);
 
-        const material = new THREE.MeshStandardMaterial({ 
-          color: 0xffaa44,
-          flatShading: true,
-          side: THREE.DoubleSide,
-        });
+        const meshId = meshPreview.id || `mesh_${index}`;
+        
+        // Use material engine if enabled, otherwise fallback to default
+        let material: THREE.MeshStandardMaterial;
+        if (enableMaterials && materialEngine) {
+          material = materialEngine.getMaterialForMesh(meshId);
+          material.flatShading = true;
+        } else {
+          material = new THREE.MeshStandardMaterial({ 
+            color: 0xffaa44,
+            flatShading: true,
+            side: THREE.DoubleSide,
+          });
+        }
         material.needsUpdate = true;
         materials.push(material);
         
         const mesh = new THREE.Mesh(geometry, material);
-        mesh.userData.meshId = meshPreview.id || `mesh_${index}`;
+        mesh.userData.meshId = meshId;
         mesh.userData.meshIndex = index;
         scene.add(mesh);
         threeMeshes.push(mesh);
@@ -492,7 +578,7 @@ export const KclPreview3D = forwardRef<KclPreview3DRef, KclPreview3DProps>(({
       }
       sceneRef.current = null;
     };
-  }, [preview, editMode, handleClick]);
+  }, [preview, editMode, handleClick, enableMaterials, materialEngine]);
 
   return (
     <div className="relative w-full h-full min-h-0">
@@ -517,4 +603,6 @@ export const KclPreview3D = forwardRef<KclPreview3DRef, KclPreview3DProps>(({
       )}
     </div>
   );
-};
+});
+
+KclPreview3D.displayName = 'KclPreview3D';

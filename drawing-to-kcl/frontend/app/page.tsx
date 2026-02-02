@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useCallback, useRef } from 'react';
-import { KclPreview3D, FaceSelection } from '@/components/KclPreview3D';
+import { KclPreview3D, FaceSelection, KclPreview3DRef, ViewType } from '@/components/KclPreview3D';
 import { buildGeometrySpecFromKcl, exportToSTL, exportToSTLBinary, exportToSTEP } from '@/lib/geometryRuntime';
 import { buildArtifactGraphFromGeometry, extractMeshes } from '@/lib/types/artifactGraph';
 import { importSTLFile, meshToApproximateKCL, normalizeMesh } from '@/lib/stlImporter';
@@ -19,6 +19,11 @@ import {
 } from '@/lib/sketchEngine';
 import { useHistory, detectChangeLabel } from '@/hooks/useHistory';
 import { HistoryPanel } from '@/components/HistoryPanel';
+import { useShortcuts } from '@/hooks/useShortcuts';
+import { ShortcutHelp, ShortcutHelpButton } from '@/components/ShortcutHelp';
+import { MeasureToolbar, MeasureButton } from '@/components/MeasureToolbar';
+import { useMeasurement, MeasureClickInfo } from '@/lib/useMeasurement';
+import { MeasureMode, Measurement, MeasureUnit } from '@/lib/measureEngine';
 
 // KCL 코드를 프리뷰 데이터로 변환
 function kclCodeToPreview(kclCode: string) {
@@ -467,15 +472,27 @@ function FileTree({ importedFiles, onFileImport, onFileSelect, selectedFile }: F
 interface ViewportProps {
   preview: { meshes: { id?: string | null; vertices: [number, number, number][]; indices: number[] }[] } | null;
   onApplyOperation?: (operation: string, params: Record<string, number | string>) => void;
+  onSketchComplete?: (kclCode: string) => void;
 }
 
-function Viewport({ preview, onApplyOperation }: ViewportProps) {
+function Viewport({ preview, onApplyOperation, onSketchComplete }: ViewportProps) {
   const [activeTool, setActiveTool] = useState('select');
   const [editMode, setEditMode] = useState(false);
   const [selectedFace, setSelectedFace] = useState<FaceSelection | null>(null);
   const [extrudeDistance, setExtrudeDistance] = useState(1);
   const [filletRadius, setFilletRadius] = useState(0.2);
   const hasPreview = preview && preview.meshes && preview.meshes.length > 0;
+
+  // Sketch Mode State
+  const [isSketchMode, setIsSketchMode] = useState(false);
+  const [sketchState, setSketchState] = useState<SketchState>(createInitialSketchState());
+  const [cursorPosition, setCursorPosition] = useState<Point2D | null>(null);
+  const [showFinishDialog, setShowFinishDialog] = useState(false);
+  const [activeTab, setActiveTab] = useState('Viewport');
+
+  // Measurement State
+  const measurement = useMeasurement();
+  const [showMeasurePanel, setShowMeasurePanel] = useState(false);
 
   const tools = [
     { id: 'select', icon: 'near_me', label: 'Select (View Mode)' },
@@ -493,6 +510,19 @@ function Viewport({ preview, onApplyOperation }: ViewportProps) {
     { id: 'snap', icon: 'filter_center_focus', label: 'Snap' },
     { id: 'orthographic', icon: 'crop_free', label: 'Orthographic' },
   ];
+
+  // Handle measurement toggle
+  const handleMeasureToggle = useCallback(() => {
+    const newActive = !measurement.state.isActive;
+    if (newActive) {
+      setEditMode(false);
+      setActiveTool('select');
+      setShowMeasurePanel(true);
+    } else {
+      setShowMeasurePanel(false);
+    }
+    measurement.toggleActive();
+  }, [measurement]);
 
   const handleFaceSelect = useCallback((selection: FaceSelection | null) => {
     setSelectedFace(selection);
@@ -522,64 +552,180 @@ function Viewport({ preview, onApplyOperation }: ViewportProps) {
     }
   }, [selectedFace, filletRadius, onApplyOperation]);
 
+  // Sketch Mode Handlers
+  const handleEnterSketchMode = useCallback(() => {
+    setIsSketchMode(true);
+    setEditMode(false);
+    setSelectedFace(null);
+    setSketchState(createInitialSketchState());
+    setActiveTab('Sketch');
+  }, []);
+
+  const handleExitSketchMode = useCallback(() => {
+    setIsSketchMode(false);
+    setSketchState(createInitialSketchState());
+    setCursorPosition(null);
+    setActiveTab('Viewport');
+  }, []);
+
+  const handleToolChange = useCallback((tool: SketchTool) => {
+    setSketchState(prev => ({ ...prev, currentTool: tool }));
+  }, []);
+
+  const handlePlaneChange = useCallback((plane: SketchPlane) => {
+    setSketchState(prev => ({
+      ...prev,
+      plane: getDefaultPlaneConfig(plane),
+    }));
+  }, []);
+
+  const handleToggleGrid = useCallback(() => {
+    setSketchState(prev => ({ ...prev, gridVisible: !prev.gridVisible }));
+  }, []);
+
+  const handleToggleSnap = useCallback(() => {
+    setSketchState(prev => ({ ...prev, snapEnabled: !prev.snapEnabled }));
+  }, []);
+
+  const handleFinishSketch = useCallback(() => {
+    if (sketchState.elements.length > 0) {
+      setShowFinishDialog(true);
+    }
+  }, [sketchState.elements.length]);
+
+  const handleExtrudeSketch = useCallback((distance: number) => {
+    const kclCode = generateExtrudeFromSketchKCL(
+      sketchState.elements,
+      sketchState.plane,
+      distance,
+      `sketch_${Date.now()}`
+    );
+    if (onSketchComplete) {
+      onSketchComplete(kclCode);
+    }
+    setShowFinishDialog(false);
+    handleExitSketchMode();
+  }, [sketchState, onSketchComplete, handleExitSketchMode]);
+
+  const handleRevolveSketch = useCallback((angle: number) => {
+    // TODO: Implement revolve
+    const profileName = `sketch_${Date.now()}`;
+    const profileKCL = generateSketchProfileKCL(sketchState.elements, sketchState.plane, profileName);
+    const kclCode = `${profileKCL}\nlet ${profileName}_revolve = revolve(${profileName}, angle: ${angle})`;
+    if (onSketchComplete) {
+      onSketchComplete(kclCode);
+    }
+    setShowFinishDialog(false);
+    handleExitSketchMode();
+  }, [sketchState, onSketchComplete, handleExitSketchMode]);
+
+  const handleSaveProfile = useCallback((name: string) => {
+    const kclCode = generateSketchProfileKCL(sketchState.elements, sketchState.plane, name);
+    if (onSketchComplete) {
+      onSketchComplete(kclCode);
+    }
+    setShowFinishDialog(false);
+    handleExitSketchMode();
+  }, [sketchState, onSketchComplete, handleExitSketchMode]);
+
   return (
     <main className="flex-1 relative flex flex-col bg-void min-w-0 min-h-0">
-      {/* Floating Toolbar */}
-      <div className="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-surface/95 backdrop-blur-xl border border-white/10 rounded-xl p-1 z-10 glow-cyan">
-        {tools.map((tool) => (
+      {/* Sketch Mode Toolbar (when in sketch mode) */}
+      {isSketchMode ? (
+        <SketchToolbar
+          isSketchMode={isSketchMode}
+          onEnterSketchMode={handleEnterSketchMode}
+          onExitSketchMode={handleExitSketchMode}
+          currentTool={sketchState.currentTool}
+          onToolChange={handleToolChange}
+          currentPlane={sketchState.plane.type}
+          onPlaneChange={handlePlaneChange}
+          gridVisible={sketchState.gridVisible}
+          onToggleGrid={handleToggleGrid}
+          snapEnabled={sketchState.snapEnabled}
+          onToggleSnap={handleToggleSnap}
+          onFinishSketch={handleFinishSketch}
+          canFinish={sketchState.elements.length > 0}
+        />
+      ) : (
+        /* Normal Floating Toolbar */
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-surface/95 backdrop-blur-xl border border-white/10 rounded-xl p-1 z-10 glow-cyan">
+          {/* Sketch Mode Entry Button */}
           <button
-            key={tool.id}
-            onClick={() => {
-              setActiveTool(tool.id);
-              setEditMode(tool.id === 'edit');
-              if (tool.id !== 'edit') setSelectedFace(null);
-            }}
-            className={`p-2 rounded-lg transition-all ${
-              activeTool === tool.id
-                ? 'bg-cyan text-void'
-                : 'text-text-muted hover:text-text hover:bg-white/5'
-            }`}
-            title={tool.label}
+            onClick={handleEnterSketchMode}
+            className="flex items-center gap-2 px-3 py-2 bg-green/20 text-green hover:bg-green/30 rounded-lg transition-all"
+            title="New Sketch (2D Drawing)"
           >
-            <Icon name={tool.icon} className="text-lg" />
+            <Icon name="draw" className="text-lg" />
+            <span className="text-xs font-medium">Sketch</span>
           </button>
-        ))}
 
-        {editMode && (
-          <>
-            <div className="w-px h-6 bg-white/10 mx-1" />
-            {editTools.map((tool) => (
-              <button
-                key={tool.id}
-                onClick={() => setActiveTool(tool.id)}
-                className={`p-2 rounded-lg transition-all ${
-                  activeTool === tool.id
-                    ? 'bg-orange text-void'
-                    : 'text-text-muted hover:text-text hover:bg-white/5'
-                }`}
-                title={tool.label}
-              >
-                <Icon name={tool.icon} className="text-lg" />
-              </button>
-            ))}
-          </>
-        )}
+          <div className="w-px h-6 bg-white/10 mx-1" />
 
-        <div className="w-px h-6 bg-white/10 mx-1" />
+          {tools.map((tool) => (
+            <button
+              key={tool.id}
+              onClick={() => {
+                setActiveTool(tool.id);
+                setEditMode(tool.id === 'edit');
+                if (tool.id !== 'edit') setSelectedFace(null);
+              }}
+              className={`p-2 rounded-lg transition-all ${
+                activeTool === tool.id
+                  ? 'bg-cyan text-void'
+                  : 'text-text-muted hover:text-text hover:bg-white/5'
+              }`}
+              title={tool.label}
+            >
+              <Icon name={tool.icon} className="text-lg" />
+            </button>
+          ))}
 
-        {viewTools.map((tool) => (
-          <button
-            key={tool.id}
-            className="p-2 text-text-muted hover:text-text hover:bg-white/5 rounded-lg transition-all"
-            title={tool.label}
-          >
-            <Icon name={tool.icon} className="text-lg" />
-          </button>
-        ))}
-      </div>
+          {editMode && (
+            <>
+              <div className="w-px h-6 bg-white/10 mx-1" />
+              {editTools.map((tool) => (
+                <button
+                  key={tool.id}
+                  onClick={() => setActiveTool(tool.id)}
+                  className={`p-2 rounded-lg transition-all ${
+                    activeTool === tool.id
+                      ? 'bg-orange text-void'
+                      : 'text-text-muted hover:text-text hover:bg-white/5'
+                  }`}
+                  title={tool.label}
+                >
+                  <Icon name={tool.icon} className="text-lg" />
+                </button>
+              ))}
+            </>
+          )}
+
+          <div className="w-px h-6 bg-white/10 mx-1" />
+
+          {viewTools.map((tool) => (
+            <button
+              key={tool.id}
+              className="p-2 text-text-muted hover:text-text hover:bg-white/5 rounded-lg transition-all"
+              title={tool.label}
+            >
+              <Icon name={tool.icon} className="text-lg" />
+            </button>
+          ))}
+
+          <div className="w-px h-6 bg-white/10 mx-1" />
+
+          {/* Measurement Button */}
+          <MeasureButton
+            isActive={measurement.state.isActive}
+            onClick={handleMeasureToggle}
+            measurementCount={measurement.state.measurements.length}
+          />
+        </div>
+      )}
 
       {/* Face Selection Panel */}
-      {editMode && selectedFace && (
+      {editMode && selectedFace && !isSketchMode && (
         <div className="absolute top-20 right-4 bg-surface/95 backdrop-blur-xl border border-white/10 rounded-xl p-4 z-10 w-64">
           <div className="text-xs text-text-muted uppercase tracking-wider mb-3">Selected Face</div>
           <div className="space-y-2 text-sm">
@@ -646,16 +792,29 @@ function Viewport({ preview, onApplyOperation }: ViewportProps) {
       )}
 
       {/* Edit Mode Indicator */}
-      {editMode && (
+      {editMode && !isSketchMode && (
         <div className="absolute top-4 left-4 bg-orange/20 border border-orange/30 rounded-lg px-3 py-1.5 z-10">
           <span className="text-xs font-medium text-orange">EDIT MODE</span>
           <span className="text-xs text-text-muted ml-2">Click faces to select</span>
         </div>
       )}
 
-      {/* Viewport Grid / 3D Preview */}
+      {/* Viewport / Sketch Canvas */}
       <div className="flex-1 relative overflow-hidden viewport-grid flex items-center justify-center">
-        {hasPreview ? (
+        {isSketchMode ? (
+          /* 2D Sketch Canvas */
+          <div className="w-full h-full">
+            <SketchCanvas
+              sketchState={sketchState}
+              onStateChange={setSketchState}
+              onCursorMove={setCursorPosition}
+            />
+            <SketchInfoPanel
+              sketchState={sketchState}
+              cursorPosition={cursorPosition}
+            />
+          </div>
+        ) : hasPreview ? (
           <div className="w-full h-full">
             <KclPreview3D 
               preview={preview} 
@@ -669,61 +828,80 @@ function Viewport({ preview, onApplyOperation }: ViewportProps) {
             <div className="absolute inset-0 bg-gradient-radial from-cyan/10 via-transparent to-transparent blur-3xl" />
             <div className="text-center text-text-muted relative z-10">
               <Icon name="view_in_ar" className="text-6xl mb-4 text-cyan/30" />
-              <p className="text-sm">KCL 코드를 입력하면 3D 프리뷰가 표시됩니다</p>
-              <p className="text-xs mt-2 text-text-dim font-mono">예: let myBox = box(size: [1, 2, 3], center: [0, 0, 0])</p>
-              <p className="text-xs mt-1 text-text-dim font-mono">cylinder(radius: 0.5, height: 2, center: [0, 0, 0])</p>
-              <p className="text-xs mt-1 text-text-dim font-mono">sphere(radius: 1, center: [0, 0, 0])</p>
-              <p className="text-xs mt-1 text-text-dim font-mono">cone(radius: 0.5, height: 2, center: [0, 0, 0])</p>
+              <p className="text-sm">KCL 코드를 입력하거나 스케치를 시작하세요</p>
+              <p className="text-xs mt-2 text-text-dim">위의 <strong className="text-green">Sketch</strong> 버튼을 클릭해서 2D 스케치 시작</p>
+              <p className="text-xs mt-2 text-text-dim font-mono">또는 KCL 코드 입력: box(size: [1, 2, 3], center: [0, 0, 0])</p>
             </div>
           </div>
         )}
 
         {/* Bottom Left Info */}
-        <div className="absolute bottom-4 left-4 flex flex-col gap-2">
-          <div className="flex items-center gap-2 bg-surface/90 backdrop-blur-sm px-3 py-1.5 rounded-lg border border-white/5">
-            <div className="size-2 rounded-full bg-green animate-pulse" />
-            <span className="text-[11px] font-mono text-text-muted">60 FPS</span>
-            <div className="w-px h-3 bg-white/10" />
-            <span className="text-[11px] font-mono text-text-muted">
-              {hasPreview ? `${preview.meshes.length} mesh` : '0 mesh'}
-            </span>
+        {!isSketchMode && (
+          <div className="absolute bottom-4 left-4 flex flex-col gap-2">
+            <div className="flex items-center gap-2 bg-surface/90 backdrop-blur-sm px-3 py-1.5 rounded-lg border border-white/5">
+              <div className="size-2 rounded-full bg-green animate-pulse" />
+              <span className="text-[11px] font-mono text-text-muted">60 FPS</span>
+              <div className="w-px h-3 bg-white/10" />
+              <span className="text-[11px] font-mono text-text-muted">
+                {hasPreview ? `${preview.meshes.length} mesh` : '0 mesh'}
+              </span>
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Camera Controls */}
-        <div className="absolute bottom-4 right-4 flex flex-col gap-1">
-          <button className="p-2 bg-surface/90 backdrop-blur-sm border border-white/5 rounded-lg text-text-muted hover:text-text transition-colors">
-            <Icon name="add" className="text-lg" />
-          </button>
-          <button className="p-2 bg-surface/90 backdrop-blur-sm border border-white/5 rounded-lg text-text-muted hover:text-text transition-colors">
-            <Icon name="remove" className="text-lg" />
-          </button>
-          <button className="p-2 bg-surface/90 backdrop-blur-sm border border-white/5 rounded-lg text-text-muted hover:text-text transition-colors">
-            <Icon name="crop_free" className="text-lg" />
-          </button>
-        </div>
+        {!isSketchMode && (
+          <div className="absolute bottom-4 right-4 flex flex-col gap-1">
+            <button className="p-2 bg-surface/90 backdrop-blur-sm border border-white/5 rounded-lg text-text-muted hover:text-text transition-colors">
+              <Icon name="add" className="text-lg" />
+            </button>
+            <button className="p-2 bg-surface/90 backdrop-blur-sm border border-white/5 rounded-lg text-text-muted hover:text-text transition-colors">
+              <Icon name="remove" className="text-lg" />
+            </button>
+            <button className="p-2 bg-surface/90 backdrop-blur-sm border border-white/5 rounded-lg text-text-muted hover:text-text transition-colors">
+              <Icon name="crop_free" className="text-lg" />
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Bottom Tabs */}
       <div className="border-t border-white/5 bg-surface/80 backdrop-blur-sm px-4 shrink-0">
         <div className="flex gap-1">
-          {['Viewport', 'Wireframe', 'Node Editor', 'UV Map'].map((tab, i) => (
+          {['Viewport', 'Sketch', 'Wireframe', 'Node Editor'].map((tab) => (
             <button
               key={tab}
+              onClick={() => {
+                if (tab === 'Sketch' && !isSketchMode) {
+                  handleEnterSketchMode();
+                } else if (tab !== 'Sketch') {
+                  handleExitSketchMode();
+                }
+                setActiveTab(tab);
+              }}
               className={`px-4 py-2.5 text-xs font-medium transition-colors relative ${
-                i === 0
-                  ? 'text-cyan'
+                activeTab === tab
+                  ? tab === 'Sketch' ? 'text-green' : 'text-cyan'
                   : 'text-text-muted hover:text-text'
               }`}
             >
               {tab}
-              {i === 0 && (
-                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-cyan" />
+              {activeTab === tab && (
+                <div className={`absolute bottom-0 left-0 right-0 h-0.5 ${tab === 'Sketch' ? 'bg-green' : 'bg-cyan'}`} />
               )}
             </button>
           ))}
         </div>
       </div>
+
+      {/* Sketch Finish Dialog */}
+      <SketchFinishDialog
+        isOpen={showFinishDialog}
+        onClose={() => setShowFinishDialog(false)}
+        onExtrude={handleExtrudeSketch}
+        onRevolve={handleRevolveSketch}
+        onSaveProfile={handleSaveProfile}
+      />
     </main>
   );
 }
@@ -961,6 +1139,11 @@ export default function Page() {
   const [selectedImportedFile, setSelectedImportedFile] = useState<ImportedFile | null>(null);
   const [historyPanelCollapsed, setHistoryPanelCollapsed] = useState(false);
   const prevKclCodeRef = useRef('');
+  
+  // Refs for shortcuts
+  const preview3DRef = useRef<KclPreview3DRef>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [currentView, setCurrentView] = useState<ViewType>('perspective');
 
   // History hook - handles undo/redo state and keyboard shortcuts
   const history = useHistory({
@@ -985,6 +1168,64 @@ export default function Page() {
     setKclCode(newCode);
     history.pushState(newCode, changeLabel);
   }, [history]);
+
+  // Shortcut handlers
+  const handleSave = useCallback(() => {
+    if (!kclCode) return;
+    const blob = new Blob([kclCode], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'model.kcl';
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [kclCode]);
+
+  const handleOpen = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
+
+  const handleViewChange = useCallback((view: ViewType) => {
+    preview3DRef.current?.setView(view);
+    setCurrentView(view);
+  }, []);
+
+  const handleFocus = useCallback(() => {
+    preview3DRef.current?.focusOnSelection();
+  }, []);
+
+  // Keyboard shortcuts hook
+  const { showHelp, setShowHelp } = useShortcuts({
+    onSave: handleSave,
+    onOpen: handleOpen,
+    onUndo: history.undo,
+    onRedo: history.redo,
+    onEscape: useCallback(() => {
+      setShowHelp(false);
+    }, []),
+    onFocus: handleFocus,
+    onViewChange: handleViewChange,
+    enabled: true,
+  });
+
+  // Handle file input change for Open shortcut
+  const handleFileInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file && file.name.endsWith('.kcl')) {
+      file.text().then(text => {
+        updateKclCodeWithHistory(text, `Open ${file.name}`);
+        try {
+          const newPreview = kclCodeToPreview(text);
+          previewDataRef.current = newPreview;
+          setPreview({ meshes: newPreview.meshes });
+        } catch (error) {
+          console.error('KCL parse error:', error);
+        }
+      });
+    }
+    // Reset input so same file can be selected again
+    e.target.value = '';
+  }, [updateKclCodeWithHistory]);
 
   // Handle file import (STL or KCL)
   const handleFileImport = useCallback(async (file: File) => {
@@ -1072,8 +1313,8 @@ export default function Page() {
     }
   }, []);
 
-  const handleSubmitCode = useCallback((code: string) => {
-    updateKclCodeWithHistory(code, 'AI Generated Code');
+  const handleSubmitCode = useCallback((code: string, label?: string) => {
+    updateKclCodeWithHistory(code, label || 'AI Generated Code');
     try {
       const newPreview = kclCodeToPreview(code);
       previewDataRef.current = newPreview;
@@ -1111,7 +1352,7 @@ export default function Page() {
       const newCode = kclCode + '\n' + newLine;
       
       setOperationCount(prev => prev + 1);
-      handleSubmitCode(newCode);
+      handleSubmitCode(newCode, 'Extrude');
     } else if (operation === 'fillet') {
       const radius = params.radius as number || 0.2;
       
@@ -1128,7 +1369,7 @@ export default function Page() {
       const newCode = kclCode + '\n' + newLine;
       
       setOperationCount(prev => prev + 1);
-      handleSubmitCode(newCode);
+      handleSubmitCode(newCode, 'Apply Fillet');
     }
   }, [kclCode, operationCount, handleSubmitCode]);
 
@@ -1184,6 +1425,15 @@ export default function Page() {
 
   return (
     <>
+      {/* Hidden file input for Open shortcut */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".kcl"
+        className="hidden"
+        onChange={handleFileInputChange}
+      />
+      
       <Header onExportClick={() => setShowExportModal(true)} />
       <div className="flex flex-1 overflow-hidden min-h-0">
         <SidebarNav />
@@ -1193,7 +1443,24 @@ export default function Page() {
           onFileSelect={handleFileSelect}
           selectedFile={selectedImportedFile}
         />
-        <Viewport preview={preview} onApplyOperation={handleApplyOperation} />
+        <Viewport 
+          preview={preview} 
+          onApplyOperation={handleApplyOperation} 
+          onSketchComplete={(code) => handleSubmitCode(code, 'Sketch Complete')}
+          preview3DRef={preview3DRef}
+          currentView={currentView}
+        />
+        <HistoryPanel
+          entries={history.entries}
+          currentIndex={history.currentIndex}
+          canUndo={history.canUndo}
+          canRedo={history.canRedo}
+          onUndo={history.undo}
+          onRedo={history.redo}
+          onJumpTo={history.jumpTo}
+          isCollapsed={historyPanelCollapsed}
+          onToggleCollapse={() => setHistoryPanelCollapsed(prev => !prev)}
+        />
         <ChatPanel onSubmitCode={handleSubmitCode} kclCode={kclCode} />
       </div>
       <ExportModal
@@ -1201,6 +1468,10 @@ export default function Page() {
         onClose={() => setShowExportModal(false)}
         onExport={handleExport}
       />
+      
+      {/* Keyboard shortcuts help */}
+      <ShortcutHelpButton onClick={() => setShowHelp(true)} />
+      <ShortcutHelp isOpen={showHelp} onClose={() => setShowHelp(false)} />
     </>
   );
 }
