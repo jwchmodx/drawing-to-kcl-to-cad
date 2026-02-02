@@ -1,0 +1,520 @@
+/**
+ * Artifact graph types and helpers: parse, extractMeshes, buildArtifactGraphFromGeometry.
+ */
+
+import type { GeometrySpec, BoxSpec, CylinderSpec, SphereSpec, ConeSpec, ExtrudeSpec } from '@/lib/types/geometrySpec';
+
+export interface ArtifactGraph {
+  artifacts: string[];
+  nodes: Record<string, ArtifactNode>;
+}
+
+export interface ArtifactNode {
+  id: string;
+  type: string;
+  astNodeId?: string;
+  geometry: { vertices: number[][]; indices: number[] } | null;
+  // Original spec for operations
+  spec?: BoxSpec | CylinderSpec | SphereSpec | ConeSpec;
+}
+
+export interface MeshData {
+  id: string;
+  vertices: number[][];
+  indices: number[];
+}
+
+export function parseArtifactGraph(wasmResult: unknown): ArtifactGraph {
+  if (wasmResult === null || typeof wasmResult !== 'object') {
+    throw new Error('Invalid artifact graph');
+  }
+  const o = wasmResult as { artifacts?: string[]; nodes?: Record<string, unknown> };
+  return {
+    artifacts: Array.isArray(o.artifacts) ? o.artifacts : [],
+    nodes: o.nodes && typeof o.nodes === 'object' ? (o.nodes as Record<string, ArtifactNode>) : {},
+  };
+}
+
+export function parseKclRunOutput(raw: string | object): ArtifactGraph {
+  if (typeof raw === 'object' && raw !== null && 'artifacts' in raw && 'nodes' in raw) {
+    return parseArtifactGraph(raw);
+  }
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      return parseArtifactGraph(parsed);
+    } catch {
+      return { artifacts: [], nodes: {} };
+    }
+  }
+  return { artifacts: [], nodes: {} };
+}
+
+export function extractMeshes(graph: ArtifactGraph): MeshData[] {
+  const meshes: MeshData[] = [];
+  for (const id of graph.artifacts) {
+    const node = graph.nodes[id];
+    if (node?.geometry?.vertices && node.geometry.indices) {
+      meshes.push({
+        id: node.id,
+        vertices: node.geometry.vertices,
+        indices: node.geometry.indices,
+      });
+    }
+  }
+  return meshes;
+}
+
+export function findArtifactById(graph: ArtifactGraph, id: string): ArtifactNode | null {
+  return graph.nodes[id] ?? null;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// BOX GEOMETRY
+// ═══════════════════════════════════════════════════════════════
+function boxVerticesAndIndices(
+  size: [number, number, number],
+  center: [number, number, number]
+): { vertices: number[][]; indices: number[] } {
+  const [sx, sy, sz] = size;
+  const [cx, cy, cz] = center;
+  const hx = sx / 2;
+  const hy = sy / 2;
+  const hz = sz / 2;
+  const vertices: number[][] = [
+    [cx - hx, cy - hy, cz - hz],
+    [cx + hx, cy - hy, cz - hz],
+    [cx + hx, cy + hy, cz - hz],
+    [cx - hx, cy + hy, cz - hz],
+    [cx - hx, cy - hy, cz + hz],
+    [cx + hx, cy - hy, cz + hz],
+    [cx + hx, cy + hy, cz + hz],
+    [cx - hx, cy + hy, cz + hz],
+  ];
+  const indices = [
+    0, 1, 2, 0, 2, 3,  // back
+    4, 6, 5, 4, 7, 6,  // front
+    0, 4, 5, 0, 5, 1,  // bottom
+    2, 6, 7, 2, 7, 3,  // top
+    0, 3, 7, 0, 7, 4,  // left
+    1, 5, 6, 1, 6, 2,  // right
+  ];
+  return { vertices, indices };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// CYLINDER GEOMETRY
+// ═══════════════════════════════════════════════════════════════
+function cylinderVerticesAndIndices(
+  radius: number,
+  height: number,
+  center: [number, number, number],
+  segments: number = 32
+): { vertices: number[][]; indices: number[] } {
+  const [cx, cy, cz] = center;
+  const halfHeight = height / 2;
+  const vertices: number[][] = [];
+  const indices: number[] = [];
+  
+  // Bottom center
+  vertices.push([cx, cy - halfHeight, cz]);
+  const bottomCenterIdx = 0;
+  
+  // Bottom ring
+  for (let i = 0; i < segments; i++) {
+    const angle = (i / segments) * Math.PI * 2;
+    const x = cx + Math.cos(angle) * radius;
+    const z = cz + Math.sin(angle) * radius;
+    vertices.push([x, cy - halfHeight, z]);
+  }
+  
+  // Top center
+  vertices.push([cx, cy + halfHeight, cz]);
+  const topCenterIdx = segments + 1;
+  
+  // Top ring
+  for (let i = 0; i < segments; i++) {
+    const angle = (i / segments) * Math.PI * 2;
+    const x = cx + Math.cos(angle) * radius;
+    const z = cz + Math.sin(angle) * radius;
+    vertices.push([x, cy + halfHeight, z]);
+  }
+  
+  // Bottom cap
+  for (let i = 0; i < segments; i++) {
+    const next = (i + 1) % segments;
+    indices.push(bottomCenterIdx, 1 + next, 1 + i);
+  }
+  
+  // Top cap
+  for (let i = 0; i < segments; i++) {
+    const next = (i + 1) % segments;
+    indices.push(topCenterIdx, topCenterIdx + 1 + i, topCenterIdx + 1 + next);
+  }
+  
+  // Side faces
+  for (let i = 0; i < segments; i++) {
+    const next = (i + 1) % segments;
+    const bottomA = 1 + i;
+    const bottomB = 1 + next;
+    const topA = topCenterIdx + 1 + i;
+    const topB = topCenterIdx + 1 + next;
+    
+    indices.push(bottomA, topA, topB);
+    indices.push(bottomA, topB, bottomB);
+  }
+  
+  return { vertices, indices };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SPHERE GEOMETRY
+// ═══════════════════════════════════════════════════════════════
+function sphereVerticesAndIndices(
+  radius: number,
+  center: [number, number, number],
+  widthSegments: number = 24,
+  heightSegments: number = 16
+): { vertices: number[][]; indices: number[] } {
+  const [cx, cy, cz] = center;
+  const vertices: number[][] = [];
+  const indices: number[] = [];
+  
+  // Generate vertices
+  for (let lat = 0; lat <= heightSegments; lat++) {
+    const theta = (lat * Math.PI) / heightSegments;
+    const sinTheta = Math.sin(theta);
+    const cosTheta = Math.cos(theta);
+    
+    for (let lon = 0; lon <= widthSegments; lon++) {
+      const phi = (lon * 2 * Math.PI) / widthSegments;
+      const sinPhi = Math.sin(phi);
+      const cosPhi = Math.cos(phi);
+      
+      const x = cx + radius * cosPhi * sinTheta;
+      const y = cy + radius * cosTheta;
+      const z = cz + radius * sinPhi * sinTheta;
+      
+      vertices.push([x, y, z]);
+    }
+  }
+  
+  // Generate indices
+  for (let lat = 0; lat < heightSegments; lat++) {
+    for (let lon = 0; lon < widthSegments; lon++) {
+      const first = lat * (widthSegments + 1) + lon;
+      const second = first + widthSegments + 1;
+      
+      indices.push(first, second, first + 1);
+      indices.push(second, second + 1, first + 1);
+    }
+  }
+  
+  return { vertices, indices };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// CONE GEOMETRY
+// ═══════════════════════════════════════════════════════════════
+function coneVerticesAndIndices(
+  radius: number,
+  height: number,
+  center: [number, number, number],
+  segments: number = 32
+): { vertices: number[][]; indices: number[] } {
+  const [cx, cy, cz] = center;
+  const halfHeight = height / 2;
+  const vertices: number[][] = [];
+  const indices: number[] = [];
+  
+  // Apex (top)
+  vertices.push([cx, cy + halfHeight, cz]);
+  const apexIdx = 0;
+  
+  // Bottom center
+  vertices.push([cx, cy - halfHeight, cz]);
+  const bottomCenterIdx = 1;
+  
+  // Bottom ring
+  for (let i = 0; i < segments; i++) {
+    const angle = (i / segments) * Math.PI * 2;
+    const x = cx + Math.cos(angle) * radius;
+    const z = cz + Math.sin(angle) * radius;
+    vertices.push([x, cy - halfHeight, z]);
+  }
+  
+  // Side faces (apex to bottom ring)
+  for (let i = 0; i < segments; i++) {
+    const next = (i + 1) % segments;
+    indices.push(apexIdx, 2 + i, 2 + next);
+  }
+  
+  // Bottom cap
+  for (let i = 0; i < segments; i++) {
+    const next = (i + 1) % segments;
+    indices.push(bottomCenterIdx, 2 + next, 2 + i);
+  }
+  
+  return { vertices, indices };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// EXTRUDE GEOMETRY
+// ═══════════════════════════════════════════════════════════════
+export function extrudeBox(
+  boxSpec: BoxSpec,
+  face: 'top' | 'bottom' | 'left' | 'right' | 'front' | 'back',
+  distance: number
+): { vertices: number[][]; indices: number[] } {
+  const [sx, sy, sz] = boxSpec.size;
+  const [cx, cy, cz] = boxSpec.center;
+  
+  // Calculate new dimensions based on extrude direction
+  let newSize: [number, number, number] = [sx, sy, sz];
+  let newCenter: [number, number, number] = [cx, cy, cz];
+  
+  switch (face) {
+    case 'top':
+      newSize = [sx, sy + distance, sz];
+      newCenter = [cx, cy + distance / 2, cz];
+      break;
+    case 'bottom':
+      newSize = [sx, sy + distance, sz];
+      newCenter = [cx, cy - distance / 2, cz];
+      break;
+    case 'left':
+      newSize = [sx + distance, sy, sz];
+      newCenter = [cx - distance / 2, cy, cz];
+      break;
+    case 'right':
+      newSize = [sx + distance, sy, sz];
+      newCenter = [cx + distance / 2, cy, cz];
+      break;
+    case 'front':
+      newSize = [sx, sy, sz + distance];
+      newCenter = [cx, cy, cz + distance / 2];
+      break;
+    case 'back':
+      newSize = [sx, sy, sz + distance];
+      newCenter = [cx, cy, cz - distance / 2];
+      break;
+  }
+  
+  return boxVerticesAndIndices(newSize, newCenter);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// FILLET GEOMETRY (simplified - rounds box corners)
+// ═══════════════════════════════════════════════════════════════
+export function filletBox(
+  boxSpec: BoxSpec,
+  radius: number,
+  segments: number = 8
+): { vertices: number[][]; indices: number[] } {
+  // For a full fillet implementation, we would need to:
+  // 1. Identify the edges to fillet
+  // 2. Create curved geometry along those edges
+  // 3. Rebuild the faces
+  
+  // Simplified: Create a rounded box by generating smooth corners
+  const [sx, sy, sz] = boxSpec.size;
+  const [cx, cy, cz] = boxSpec.center;
+  const hx = sx / 2;
+  const hy = sy / 2;
+  const hz = sz / 2;
+  
+  // Clamp radius to half the smallest dimension
+  const maxRadius = Math.min(hx, hy, hz);
+  const r = Math.min(radius, maxRadius);
+  
+  const vertices: number[][] = [];
+  const indices: number[] = [];
+  
+  // Generate rounded corner vertices
+  // 8 corners, each with a quarter-sphere section
+  const corners: [number, number, number, number, number, number][] = [
+    [cx - hx + r, cy - hy + r, cz - hz + r, -1, -1, -1],
+    [cx + hx - r, cy - hy + r, cz - hz + r, 1, -1, -1],
+    [cx + hx - r, cy + hy - r, cz - hz + r, 1, 1, -1],
+    [cx - hx + r, cy + hy - r, cz - hz + r, -1, 1, -1],
+    [cx - hx + r, cy - hy + r, cz + hz - r, -1, -1, 1],
+    [cx + hx - r, cy - hy + r, cz + hz - r, 1, -1, 1],
+    [cx + hx - r, cy + hy - r, cz + hz - r, 1, 1, 1],
+    [cx - hx + r, cy + hy - r, cz + hz - r, -1, 1, 1],
+  ];
+  
+  // For simplicity, we'll generate a basic rounded box
+  // using 8 corner sphere sections
+  for (const [px, py, pz, dx, dy, dz] of corners) {
+    const startIdx = vertices.length;
+    
+    // Generate corner vertices
+    for (let i = 0; i <= segments; i++) {
+      const theta = (i / segments) * Math.PI / 2;
+      for (let j = 0; j <= segments; j++) {
+        const phi = (j / segments) * Math.PI / 2;
+        
+        const x = px + dx * r * Math.sin(theta) * Math.cos(phi);
+        const y = py + dy * r * Math.cos(theta);
+        const z = pz + dz * r * Math.sin(theta) * Math.sin(phi);
+        
+        vertices.push([x, y, z]);
+      }
+    }
+    
+    // Generate corner indices
+    for (let i = 0; i < segments; i++) {
+      for (let j = 0; j < segments; j++) {
+        const a = startIdx + i * (segments + 1) + j;
+        const b = a + 1;
+        const c = a + segments + 1;
+        const d = c + 1;
+        
+        if (dx * dy * dz > 0) {
+          indices.push(a, c, b);
+          indices.push(b, c, d);
+        } else {
+          indices.push(a, b, c);
+          indices.push(b, d, c);
+        }
+      }
+    }
+  }
+  
+  // For a complete implementation, we would also need to:
+  // - Generate edge cylinders
+  // - Generate face quads
+  // This is a simplified version for demonstration
+  
+  return { vertices, indices };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// BUILD ARTIFACT GRAPH FROM GEOMETRY SPEC
+// ═══════════════════════════════════════════════════════════════
+export function buildArtifactGraphFromGeometry(spec: GeometrySpec): ArtifactGraph {
+  const artifacts: string[] = [];
+  const nodes: Record<string, ArtifactNode> = {};
+  
+  // Process boxes
+  for (const box of spec.boxes) {
+    const [sx, sy, sz] = box.size;
+    const [cx, cy, cz] = box.center;
+    const valid =
+      Number.isFinite(sx) && Number.isFinite(sy) && Number.isFinite(sz) &&
+      Number.isFinite(cx) && Number.isFinite(cy) && Number.isFinite(cz);
+    if (!valid) continue;
+    const { vertices, indices } = boxVerticesAndIndices(box.size, box.center);
+    artifacts.push(box.id);
+    nodes[box.id] = {
+      id: box.id,
+      type: 'solid',
+      geometry: { vertices, indices },
+      spec: box,
+    };
+  }
+  
+  // Process cylinders
+  for (const cyl of spec.cylinders || []) {
+    const { radius, height, center, segments } = cyl;
+    const [cx, cy, cz] = center;
+    const valid = Number.isFinite(radius) && Number.isFinite(height) &&
+      Number.isFinite(cx) && Number.isFinite(cy) && Number.isFinite(cz);
+    if (!valid) continue;
+    const { vertices, indices } = cylinderVerticesAndIndices(radius, height, center, segments);
+    artifacts.push(cyl.id);
+    nodes[cyl.id] = {
+      id: cyl.id,
+      type: 'solid',
+      geometry: { vertices, indices },
+      spec: cyl,
+    };
+  }
+  
+  // Process spheres
+  for (const sphere of spec.spheres || []) {
+    const { radius, center, widthSegments, heightSegments } = sphere;
+    const [cx, cy, cz] = center;
+    const valid = Number.isFinite(radius) &&
+      Number.isFinite(cx) && Number.isFinite(cy) && Number.isFinite(cz);
+    if (!valid) continue;
+    const { vertices, indices } = sphereVerticesAndIndices(radius, center, widthSegments, heightSegments);
+    artifacts.push(sphere.id);
+    nodes[sphere.id] = {
+      id: sphere.id,
+      type: 'solid',
+      geometry: { vertices, indices },
+      spec: sphere,
+    };
+  }
+  
+  // Process cones
+  for (const cone of spec.cones || []) {
+    const { radius, height, center, segments } = cone;
+    const [cx, cy, cz] = center;
+    const valid = Number.isFinite(radius) && Number.isFinite(height) &&
+      Number.isFinite(cx) && Number.isFinite(cy) && Number.isFinite(cz);
+    if (!valid) continue;
+    const { vertices, indices } = coneVerticesAndIndices(radius, height, center, segments);
+    artifacts.push(cone.id);
+    nodes[cone.id] = {
+      id: cone.id,
+      type: 'solid',
+      geometry: { vertices, indices },
+      spec: cone,
+    };
+  }
+  
+  // Process extrudes
+  for (const ext of spec.extrudes || []) {
+    const sourceNode = nodes[ext.sourceId];
+    if (!sourceNode || !sourceNode.spec) continue;
+    
+    // Only support box extrusion for now
+    if (sourceNode.type === 'solid' && 'size' in sourceNode.spec) {
+      const boxSpec = sourceNode.spec as BoxSpec;
+      const { vertices, indices } = extrudeBox(boxSpec, ext.face, ext.distance);
+      
+      // Update the source node's geometry
+      sourceNode.geometry = { vertices, indices };
+      // Update the spec
+      const newSize = [...boxSpec.size] as [number, number, number];
+      const newCenter = [...boxSpec.center] as [number, number, number];
+      
+      switch (ext.face) {
+        case 'top':
+        case 'bottom':
+          newSize[1] += ext.distance;
+          newCenter[1] += (ext.face === 'top' ? 1 : -1) * ext.distance / 2;
+          break;
+        case 'left':
+        case 'right':
+          newSize[0] += ext.distance;
+          newCenter[0] += (ext.face === 'right' ? 1 : -1) * ext.distance / 2;
+          break;
+        case 'front':
+        case 'back':
+          newSize[2] += ext.distance;
+          newCenter[2] += (ext.face === 'front' ? 1 : -1) * ext.distance / 2;
+          break;
+      }
+      
+      (sourceNode.spec as BoxSpec).size = newSize;
+      (sourceNode.spec as BoxSpec).center = newCenter;
+    }
+  }
+  
+  // Process fillets
+  for (const fillet of spec.fillets || []) {
+    const sourceNode = nodes[fillet.sourceId];
+    if (!sourceNode || !sourceNode.spec) continue;
+    
+    if (sourceNode.type === 'solid' && 'size' in sourceNode.spec) {
+      const boxSpec = sourceNode.spec as BoxSpec;
+      const { vertices, indices } = filletBox(boxSpec, fillet.radius, fillet.segments);
+      sourceNode.geometry = { vertices, indices };
+    }
+  }
+  
+  return { artifacts, nodes };
+}

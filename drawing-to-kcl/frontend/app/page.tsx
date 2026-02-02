@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { KclPreview3D, FaceSelection } from '@/components/KclPreview3D';
-import { buildGeometrySpecFromKcl } from '@/lib/geometryRuntime';
+import { buildGeometrySpecFromKcl, exportToSTL, exportToSTLBinary, exportToSTEP } from '@/lib/geometryRuntime';
 import { buildArtifactGraphFromGeometry, extractMeshes } from '@/lib/types/artifactGraph';
 
 // KCL 코드를 프리뷰 데이터로 변환
@@ -10,11 +10,19 @@ function kclCodeToPreview(kclCode: string) {
   const spec = buildGeometrySpecFromKcl(kclCode);
   const graph = buildArtifactGraphFromGeometry(spec);
   const meshes = extractMeshes(graph);
-  return { meshes: meshes.map(m => ({ id: m.id, vertices: m.vertices as [number, number, number][], indices: m.indices })) };
+  return { 
+    meshes: meshes.map(m => ({ 
+      id: m.id, 
+      vertices: m.vertices as [number, number, number][], 
+      indices: m.indices 
+    })),
+    spec,
+    graph
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════
-// ICON COMPONENT - Consistent Material Symbols
+// ICON COMPONENT
 // ═══════════════════════════════════════════════════════════════
 function Icon({ name, className = '' }: { name: string; className?: string }) {
   return (
@@ -23,9 +31,95 @@ function Icon({ name, className = '' }: { name: string; className?: string }) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// EXPORT MODAL
+// ═══════════════════════════════════════════════════════════════
+interface ExportModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onExport: (format: 'stl' | 'stl-binary' | 'step', filename: string) => void;
+}
+
+function ExportModal({ isOpen, onClose, onExport }: ExportModalProps) {
+  const [filename, setFilename] = useState('model');
+  const [format, setFormat] = useState<'stl' | 'stl-binary' | 'step'>('stl');
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+      <div className="bg-surface border border-white/10 rounded-2xl p-6 w-96 shadow-2xl">
+        <h2 className="text-lg font-semibold text-text mb-4 flex items-center gap-2">
+          <Icon name="file_download" className="text-cyan" />
+          Export Model
+        </h2>
+        
+        <div className="space-y-4">
+          <div>
+            <label className="text-xs text-text-muted uppercase tracking-wider block mb-2">Filename</label>
+            <input
+              type="text"
+              value={filename}
+              onChange={(e) => setFilename(e.target.value)}
+              className="w-full bg-void border border-white/10 rounded-lg px-3 py-2 text-sm text-text focus:border-cyan/50 focus:outline-none"
+              placeholder="model"
+            />
+          </div>
+          
+          <div>
+            <label className="text-xs text-text-muted uppercase tracking-wider block mb-2">Format</label>
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { id: 'stl' as const, label: 'STL (ASCII)', icon: 'description' },
+                { id: 'stl-binary' as const, label: 'STL (Binary)', icon: 'file_present' },
+                { id: 'step' as const, label: 'STEP', icon: 'deployed_code' },
+              ].map((f) => (
+                <button
+                  key={f.id}
+                  onClick={() => setFormat(f.id)}
+                  className={`flex flex-col items-center gap-1 p-3 rounded-lg border transition-all ${
+                    format === f.id
+                      ? 'bg-cyan/10 border-cyan/50 text-cyan'
+                      : 'border-white/10 text-text-muted hover:border-white/20'
+                  }`}
+                >
+                  <Icon name={f.icon} className="text-xl" />
+                  <span className="text-[10px]">{f.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+        
+        <div className="flex gap-2 mt-6">
+          <button
+            onClick={onClose}
+            className="flex-1 px-4 py-2 text-sm text-text-muted hover:text-text bg-white/5 rounded-lg transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => {
+              onExport(format, filename || 'model');
+              onClose();
+            }}
+            className="flex-1 px-4 py-2 text-sm bg-cyan text-void font-medium rounded-lg hover:bg-cyan/90 transition-colors"
+          >
+            Export
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
 // HEADER COMPONENT
 // ═══════════════════════════════════════════════════════════════
-function Header() {
+interface HeaderProps {
+  onExportClick: () => void;
+}
+
+function Header({ onExportClick }: HeaderProps) {
   const [activeMode, setActiveMode] = useState('design');
 
   return (
@@ -88,7 +182,10 @@ function Header() {
 
         <div className="h-4 w-px bg-white/10" />
 
-        <button className="btn-primary flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs">
+        <button 
+          onClick={onExportClick}
+          className="btn-primary flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs"
+        >
           <Icon name="file_download" className="text-sm" />
           Export
         </button>
@@ -179,7 +276,6 @@ function FileTree() {
 
       <div className="flex-1 overflow-y-auto px-2 py-2">
         <div className="space-y-0.5">
-          {/* Project Item */}
           <button
             onClick={() => toggleExpand('chair')}
             className="tree-item flex items-center gap-2 w-full px-2 py-1.5 rounded-md"
@@ -191,7 +287,6 @@ function FileTree() {
 
           {expanded['chair'] && (
             <div className="ml-4 border-l border-white/5 pl-2">
-              {/* Meshes Folder */}
               <button
                 onClick={() => toggleExpand('meshes')}
                 className="tree-item flex items-center gap-2 w-full px-2 py-1.5 rounded-md"
@@ -215,7 +310,6 @@ function FileTree() {
                 </div>
               )}
 
-              {/* Other items */}
               <button className="tree-item flex items-center gap-2 w-full px-2 py-1.5 rounded-md">
                 <Icon name="keyboard_arrow_right" className="text-base text-text-dim" />
                 <Icon name="texture" className="text-base text-cyan-dim" />
@@ -231,7 +325,6 @@ function FileTree() {
         </div>
       </div>
 
-      {/* Bottom stats */}
       <div className="px-4 py-3 border-t border-white/5">
         <div className="flex items-center justify-between text-[10px] text-text-dim">
           <span className="uppercase tracking-wider">Memory</span>
@@ -247,7 +340,7 @@ function FileTree() {
 // ═══════════════════════════════════════════════════════════════
 interface ViewportProps {
   preview: { meshes: { id?: string | null; vertices: [number, number, number][]; indices: number[] }[] } | null;
-  onApplyOperation?: (operation: string, params: Record<string, number>) => void;
+  onApplyOperation?: (operation: string, params: Record<string, number | string>) => void;
 }
 
 function Viewport({ preview, onApplyOperation }: ViewportProps) {
@@ -255,6 +348,7 @@ function Viewport({ preview, onApplyOperation }: ViewportProps) {
   const [editMode, setEditMode] = useState(false);
   const [selectedFace, setSelectedFace] = useState<FaceSelection | null>(null);
   const [extrudeDistance, setExtrudeDistance] = useState(1);
+  const [filletRadius, setFilletRadius] = useState(0.2);
   const hasPreview = preview && preview.meshes && preview.meshes.length > 0;
 
   const tools = [
@@ -281,7 +375,7 @@ function Viewport({ preview, onApplyOperation }: ViewportProps) {
   const handleApplyExtrude = useCallback(() => {
     if (selectedFace && onApplyOperation) {
       onApplyOperation('extrude', {
-        meshId: selectedFace.meshId ? parseInt(selectedFace.meshId.split('_')[1] || '0') : 0,
+        meshId: selectedFace.meshId || 'mesh_0',
         faceIndex: selectedFace.faceIndex,
         distance: extrudeDistance,
         normalX: selectedFace.normal[0],
@@ -291,6 +385,16 @@ function Viewport({ preview, onApplyOperation }: ViewportProps) {
       setSelectedFace(null);
     }
   }, [selectedFace, extrudeDistance, onApplyOperation]);
+
+  const handleApplyFillet = useCallback(() => {
+    if (selectedFace && onApplyOperation) {
+      onApplyOperation('fillet', {
+        meshId: selectedFace.meshId || 'mesh_0',
+        radius: filletRadius,
+      });
+      setSelectedFace(null);
+    }
+  }, [selectedFace, filletRadius, onApplyOperation]);
 
   return (
     <main className="flex-1 relative flex flex-col bg-void min-w-0 min-h-0">
@@ -388,6 +492,30 @@ function Viewport({ preview, onApplyOperation }: ViewportProps) {
               </button>
             </div>
           )}
+
+          {activeTool === 'fillet' && (
+            <div className="mt-4 pt-4 border-t border-white/10">
+              <label className="text-xs text-text-muted uppercase tracking-wider">Fillet Radius</label>
+              <div className="flex items-center gap-2 mt-2">
+                <input
+                  type="range"
+                  min="0.05"
+                  max="1"
+                  step="0.05"
+                  value={filletRadius}
+                  onChange={(e) => setFilletRadius(parseFloat(e.target.value))}
+                  className="flex-1"
+                />
+                <span className="text-cyan font-mono w-12 text-right">{filletRadius.toFixed(2)}</span>
+              </div>
+              <button
+                onClick={handleApplyFillet}
+                className="w-full mt-3 btn-primary py-2 rounded-lg text-sm font-medium"
+              >
+                Apply Fillet
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -402,7 +530,6 @@ function Viewport({ preview, onApplyOperation }: ViewportProps) {
       {/* Viewport Grid / 3D Preview */}
       <div className="flex-1 relative overflow-hidden viewport-grid flex items-center justify-center">
         {hasPreview ? (
-          /* 3D Preview with KclPreview3D */
           <div className="w-full h-full">
             <KclPreview3D 
               preview={preview} 
@@ -412,13 +539,15 @@ function Viewport({ preview, onApplyOperation }: ViewportProps) {
             />
           </div>
         ) : (
-          /* Empty state */
           <div className="relative flex flex-col items-center justify-center">
             <div className="absolute inset-0 bg-gradient-radial from-cyan/10 via-transparent to-transparent blur-3xl" />
             <div className="text-center text-text-muted relative z-10">
               <Icon name="view_in_ar" className="text-6xl mb-4 text-cyan/30" />
               <p className="text-sm">KCL 코드를 입력하면 3D 프리뷰가 표시됩니다</p>
               <p className="text-xs mt-2 text-text-dim font-mono">예: let myBox = box(size: [1, 2, 3], center: [0, 0, 0])</p>
+              <p className="text-xs mt-1 text-text-dim font-mono">cylinder(radius: 0.5, height: 2, center: [0, 0, 0])</p>
+              <p className="text-xs mt-1 text-text-dim font-mono">sphere(radius: 1, center: [0, 0, 0])</p>
+              <p className="text-xs mt-1 text-text-dim font-mono">cone(radius: 0.5, height: 2, center: [0, 0, 0])</p>
             </div>
           </div>
         )}
@@ -493,7 +622,7 @@ function ChatPanel({ onSubmitCode, kclCode }: ChatPanelProps) {
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [mode, setMode] = useState<'ai' | 'code'>('ai'); // 'ai' = 자연어, 'code' = KCL 직접 입력
+  const [mode, setMode] = useState<'ai' | 'code'>('ai');
 
   const handleSubmit = async () => {
     if (!message.trim() || isLoading) return;
@@ -508,12 +637,10 @@ function ChatPanel({ onSubmitCode, kclCode }: ChatPanelProps) {
     setMessage('');
 
     if (mode === 'code') {
-      // KCL 코드 직접 입력 모드
       onSubmitCode(inputText);
       return;
     }
 
-    // AI 모드: 자연어 → KCL 변환
     setIsLoading(true);
     try {
       const response = await fetch('/api/generate-kcl', {
@@ -557,7 +684,6 @@ function ChatPanel({ onSubmitCode, kclCode }: ChatPanelProps) {
 
   return (
     <aside className="w-80 flex flex-col bg-surface border-l border-white/5 shrink-0">
-      {/* Header */}
       <div className="panel-header px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div className="relative">
@@ -566,7 +692,6 @@ function ChatPanel({ onSubmitCode, kclCode }: ChatPanelProps) {
           <span className="text-sm font-semibold text-text">{mode === 'ai' ? 'AI Assistant' : 'KCL Editor'}</span>
         </div>
         <div className="flex gap-1">
-          {/* Mode Toggle */}
           <button 
             className={`p-1.5 rounded transition-colors ${mode === 'ai' ? 'bg-cyan/20 text-cyan' : 'btn-ghost'}`}
             onClick={() => setMode('ai')}
@@ -584,7 +709,6 @@ function ChatPanel({ onSubmitCode, kclCode }: ChatPanelProps) {
         </div>
       </div>
 
-      {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
         {messages.length === 0 ? (
           <div className="flex-1 flex flex-col items-center justify-center text-center">
@@ -650,7 +774,6 @@ function ChatPanel({ onSubmitCode, kclCode }: ChatPanelProps) {
         )}
       </div>
 
-      {/* Current KCL Code Display */}
       {kclCode && (
         <div className="px-4 py-2 border-t border-white/5 bg-void/50">
           <div className="text-[10px] text-text-dim uppercase tracking-wider mb-1">Current Code</div>
@@ -658,7 +781,6 @@ function ChatPanel({ onSubmitCode, kclCode }: ChatPanelProps) {
         </div>
       )}
 
-      {/* Input Area */}
       <div className="p-4 border-t border-white/5 shrink-0">
         <div className="relative">
           <textarea
@@ -707,62 +829,107 @@ export default function Page() {
   const [kclCode, setKclCode] = useState('');
   const [preview, setPreview] = useState<{ meshes: { id?: string | null; vertices: [number, number, number][]; indices: number[] }[] } | null>(null);
   const [operationCount, setOperationCount] = useState(0);
+  const [showExportModal, setShowExportModal] = useState(false);
+  const previewDataRef = useRef<ReturnType<typeof kclCodeToPreview> | null>(null);
 
   const handleSubmitCode = useCallback((code: string) => {
     setKclCode(code);
     try {
       const newPreview = kclCodeToPreview(code);
-      setPreview(newPreview);
+      previewDataRef.current = newPreview;
+      setPreview({ meshes: newPreview.meshes });
     } catch (error) {
       console.error('KCL parsing error:', error);
       setPreview(null);
     }
   }, []);
 
-  // Apply operation (extrude, fillet, etc.) and generate new KCL code
-  const handleApplyOperation = useCallback((operation: string, params: Record<string, number>) => {
+  const handleApplyOperation = useCallback((operation: string, params: Record<string, number | string>) => {
     if (operation === 'extrude') {
-      // Get the current code lines
       const lines = kclCode.split('\n').filter(l => l.trim());
       
-      // Find which mesh/box we're operating on
-      const meshIndex = params.meshId || 0;
-      const distance = params.distance || 1;
-      const normalX = params.normalX || 0;
-      const normalY = params.normalY || 1;
-      const normalZ = params.normalZ || 0;
+      const distance = params.distance as number || 1;
+      const normalX = params.normalX as number || 0;
+      const normalY = params.normalY as number || 1;
+      const normalZ = params.normalZ as number || 0;
       
-      // Determine face direction from normal
-      let faceName = 'top';
+      let faceName: 'top' | 'bottom' | 'left' | 'right' | 'front' | 'back' = 'top';
       if (Math.abs(normalY) > 0.9) faceName = normalY > 0 ? 'top' : 'bottom';
       else if (Math.abs(normalX) > 0.9) faceName = normalX > 0 ? 'right' : 'left';
       else if (Math.abs(normalZ) > 0.9) faceName = normalZ > 0 ? 'front' : 'back';
       
-      // Find the source variable name
       const boxNames: string[] = [];
       lines.forEach(line => {
         const match = line.match(/let\s+(\w+)\s*=/);
         if (match) boxNames.push(match[1]);
       });
       
-      const sourceName = boxNames[meshIndex] || 'box1';
+      const sourceName = boxNames[0] || 'box1';
       const newVarName = `extruded_${operationCount}`;
       
-      // Add extrude operation to code
       const newLine = `let ${newVarName} = extrude(${sourceName}.face.${faceName}, distance: ${distance.toFixed(2)})`;
       const newCode = kclCode + '\n' + newLine;
       
       setOperationCount(prev => prev + 1);
+      handleSubmitCode(newCode);
+    } else if (operation === 'fillet') {
+      const radius = params.radius as number || 0.2;
       
-      // For now, since we don't have actual extrude implementation,
-      // we'll create a new box that simulates the extrusion
-      const simulatedCode = kclCode + '\n' + 
-        `// Extrude operation: ${newLine}\n` +
-        `let ${newVarName} = box(size: [${Math.abs(distance).toFixed(2)}, ${Math.abs(distance).toFixed(2)}, ${Math.abs(distance).toFixed(2)}], center: [${(normalX * distance).toFixed(2)}, ${(normalY * distance).toFixed(2)}, ${(normalZ * distance).toFixed(2)}])`;
+      const boxNames: string[] = [];
+      kclCode.split('\n').forEach(line => {
+        const match = line.match(/let\s+(\w+)\s*=/);
+        if (match) boxNames.push(match[1]);
+      });
       
-      handleSubmitCode(simulatedCode);
+      const sourceName = boxNames[0] || 'box1';
+      const newVarName = `filleted_${operationCount}`;
+      
+      const newLine = `let ${newVarName} = fillet(${sourceName}.edge[0], radius: ${radius.toFixed(2)})`;
+      const newCode = kclCode + '\n' + newLine;
+      
+      setOperationCount(prev => prev + 1);
+      handleSubmitCode(newCode);
     }
   }, [kclCode, operationCount, handleSubmitCode]);
+
+  const handleExport = useCallback((format: 'stl' | 'stl-binary' | 'step', filename: string) => {
+    if (!previewDataRef.current) return;
+    
+    const meshes = previewDataRef.current.meshes.map(m => ({
+      vertices: m.vertices as number[][],
+      indices: m.indices,
+    }));
+    
+    let content: string | ArrayBuffer;
+    let mimeType: string;
+    let extension: string;
+    
+    switch (format) {
+      case 'stl':
+        content = exportToSTL(meshes, filename);
+        mimeType = 'text/plain';
+        extension = '.stl';
+        break;
+      case 'stl-binary':
+        content = exportToSTLBinary(meshes);
+        mimeType = 'application/octet-stream';
+        extension = '.stl';
+        break;
+      case 'step':
+        content = exportToSTEP(meshes, filename);
+        mimeType = 'text/plain';
+        extension = '.step';
+        break;
+    }
+    
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename + extension;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, []);
 
   // URL 파라미터로 초기 코드 로드 (테스트용)
   React.useEffect(() => {
@@ -777,13 +944,18 @@ export default function Page() {
 
   return (
     <>
-      <Header />
+      <Header onExportClick={() => setShowExportModal(true)} />
       <div className="flex flex-1 overflow-hidden min-h-0">
         <SidebarNav />
         <FileTree />
         <Viewport preview={preview} onApplyOperation={handleApplyOperation} />
         <ChatPanel onSubmitCode={handleSubmitCode} kclCode={kclCode} />
       </div>
+      <ExportModal
+        isOpen={showExportModal}
+        onClose={() => setShowExportModal(false)}
+        onExport={handleExport}
+      />
     </>
   );
 }
