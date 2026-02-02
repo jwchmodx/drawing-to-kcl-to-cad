@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useCallback } from 'react';
-import { KclPreview3D } from '@/components/KclPreview3D';
+import { KclPreview3D, FaceSelection } from '@/components/KclPreview3D';
 import { buildGeometrySpecFromKcl } from '@/lib/geometryRuntime';
 import { buildArtifactGraphFromGeometry, extractMeshes } from '@/lib/types/artifactGraph';
 
@@ -247,17 +247,25 @@ function FileTree() {
 // ═══════════════════════════════════════════════════════════════
 interface ViewportProps {
   preview: { meshes: { id?: string | null; vertices: [number, number, number][]; indices: number[] }[] } | null;
+  onApplyOperation?: (operation: string, params: Record<string, number>) => void;
 }
 
-function Viewport({ preview }: ViewportProps) {
+function Viewport({ preview, onApplyOperation }: ViewportProps) {
   const [activeTool, setActiveTool] = useState('select');
+  const [editMode, setEditMode] = useState(false);
+  const [selectedFace, setSelectedFace] = useState<FaceSelection | null>(null);
+  const [extrudeDistance, setExtrudeDistance] = useState(1);
   const hasPreview = preview && preview.meshes && preview.meshes.length > 0;
 
   const tools = [
-    { id: 'select', icon: 'near_me', label: 'Select' },
-    { id: 'move', icon: 'open_with', label: 'Move' },
-    { id: 'rotate', icon: 'rotate_right', label: 'Rotate' },
-    { id: 'scale', icon: 'open_in_full', label: 'Scale' },
+    { id: 'select', icon: 'near_me', label: 'Select (View Mode)' },
+    { id: 'edit', icon: 'edit', label: 'Edit Mode' },
+  ];
+
+  const editTools = [
+    { id: 'extrude', icon: 'open_in_new', label: 'Extrude (Push/Pull)' },
+    { id: 'fillet', icon: 'rounded_corner', label: 'Fillet' },
+    { id: 'move_face', icon: 'open_with', label: 'Move Face' },
   ];
 
   const viewTools = [
@@ -266,6 +274,24 @@ function Viewport({ preview }: ViewportProps) {
     { id: 'orthographic', icon: 'crop_free', label: 'Orthographic' },
   ];
 
+  const handleFaceSelect = useCallback((selection: FaceSelection | null) => {
+    setSelectedFace(selection);
+  }, []);
+
+  const handleApplyExtrude = useCallback(() => {
+    if (selectedFace && onApplyOperation) {
+      onApplyOperation('extrude', {
+        meshId: selectedFace.meshId ? parseInt(selectedFace.meshId.split('_')[1] || '0') : 0,
+        faceIndex: selectedFace.faceIndex,
+        distance: extrudeDistance,
+        normalX: selectedFace.normal[0],
+        normalY: selectedFace.normal[1],
+        normalZ: selectedFace.normal[2],
+      });
+      setSelectedFace(null);
+    }
+  }, [selectedFace, extrudeDistance, onApplyOperation]);
+
   return (
     <main className="flex-1 relative flex flex-col bg-void min-w-0 min-h-0">
       {/* Floating Toolbar */}
@@ -273,7 +299,11 @@ function Viewport({ preview }: ViewportProps) {
         {tools.map((tool) => (
           <button
             key={tool.id}
-            onClick={() => setActiveTool(tool.id)}
+            onClick={() => {
+              setActiveTool(tool.id);
+              setEditMode(tool.id === 'edit');
+              if (tool.id !== 'edit') setSelectedFace(null);
+            }}
             className={`p-2 rounded-lg transition-all ${
               activeTool === tool.id
                 ? 'bg-cyan text-void'
@@ -284,6 +314,26 @@ function Viewport({ preview }: ViewportProps) {
             <Icon name={tool.icon} className="text-lg" />
           </button>
         ))}
+
+        {editMode && (
+          <>
+            <div className="w-px h-6 bg-white/10 mx-1" />
+            {editTools.map((tool) => (
+              <button
+                key={tool.id}
+                onClick={() => setActiveTool(tool.id)}
+                className={`p-2 rounded-lg transition-all ${
+                  activeTool === tool.id
+                    ? 'bg-orange text-void'
+                    : 'text-text-muted hover:text-text hover:bg-white/5'
+                }`}
+                title={tool.label}
+              >
+                <Icon name={tool.icon} className="text-lg" />
+              </button>
+            ))}
+          </>
+        )}
 
         <div className="w-px h-6 bg-white/10 mx-1" />
 
@@ -298,12 +348,68 @@ function Viewport({ preview }: ViewportProps) {
         ))}
       </div>
 
+      {/* Face Selection Panel */}
+      {editMode && selectedFace && (
+        <div className="absolute top-20 right-4 bg-surface/95 backdrop-blur-xl border border-white/10 rounded-xl p-4 z-10 w-64">
+          <div className="text-xs text-text-muted uppercase tracking-wider mb-3">Selected Face</div>
+          <div className="space-y-2 text-sm">
+            <div className="flex justify-between">
+              <span className="text-text-muted">Face Index:</span>
+              <span className="text-cyan font-mono">{selectedFace.faceIndex}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-text-muted">Normal:</span>
+              <span className="text-cyan font-mono text-xs">
+                [{selectedFace.normal.map(n => n.toFixed(2)).join(', ')}]
+              </span>
+            </div>
+          </div>
+          
+          {activeTool === 'extrude' && (
+            <div className="mt-4 pt-4 border-t border-white/10">
+              <label className="text-xs text-text-muted uppercase tracking-wider">Extrude Distance</label>
+              <div className="flex items-center gap-2 mt-2">
+                <input
+                  type="range"
+                  min="-3"
+                  max="3"
+                  step="0.1"
+                  value={extrudeDistance}
+                  onChange={(e) => setExtrudeDistance(parseFloat(e.target.value))}
+                  className="flex-1"
+                />
+                <span className="text-cyan font-mono w-12 text-right">{extrudeDistance.toFixed(1)}</span>
+              </div>
+              <button
+                onClick={handleApplyExtrude}
+                className="w-full mt-3 btn-primary py-2 rounded-lg text-sm font-medium"
+              >
+                Apply Extrude
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Edit Mode Indicator */}
+      {editMode && (
+        <div className="absolute top-4 left-4 bg-orange/20 border border-orange/30 rounded-lg px-3 py-1.5 z-10">
+          <span className="text-xs font-medium text-orange">EDIT MODE</span>
+          <span className="text-xs text-text-muted ml-2">Click faces to select</span>
+        </div>
+      )}
+
       {/* Viewport Grid / 3D Preview */}
       <div className="flex-1 relative overflow-hidden viewport-grid flex items-center justify-center">
         {hasPreview ? (
           /* 3D Preview with KclPreview3D */
           <div className="w-full h-full">
-            <KclPreview3D preview={preview} />
+            <KclPreview3D 
+              preview={preview} 
+              editMode={editMode}
+              selectedFace={selectedFace}
+              onFaceSelect={handleFaceSelect}
+            />
           </div>
         ) : (
           /* Empty state */
@@ -600,6 +706,7 @@ function ChatPanel({ onSubmitCode, kclCode }: ChatPanelProps) {
 export default function Page() {
   const [kclCode, setKclCode] = useState('');
   const [preview, setPreview] = useState<{ meshes: { id?: string | null; vertices: [number, number, number][]; indices: number[] }[] } | null>(null);
+  const [operationCount, setOperationCount] = useState(0);
 
   const handleSubmitCode = useCallback((code: string) => {
     setKclCode(code);
@@ -611,6 +718,51 @@ export default function Page() {
       setPreview(null);
     }
   }, []);
+
+  // Apply operation (extrude, fillet, etc.) and generate new KCL code
+  const handleApplyOperation = useCallback((operation: string, params: Record<string, number>) => {
+    if (operation === 'extrude') {
+      // Get the current code lines
+      const lines = kclCode.split('\n').filter(l => l.trim());
+      
+      // Find which mesh/box we're operating on
+      const meshIndex = params.meshId || 0;
+      const distance = params.distance || 1;
+      const normalX = params.normalX || 0;
+      const normalY = params.normalY || 1;
+      const normalZ = params.normalZ || 0;
+      
+      // Determine face direction from normal
+      let faceName = 'top';
+      if (Math.abs(normalY) > 0.9) faceName = normalY > 0 ? 'top' : 'bottom';
+      else if (Math.abs(normalX) > 0.9) faceName = normalX > 0 ? 'right' : 'left';
+      else if (Math.abs(normalZ) > 0.9) faceName = normalZ > 0 ? 'front' : 'back';
+      
+      // Find the source variable name
+      const boxNames: string[] = [];
+      lines.forEach(line => {
+        const match = line.match(/let\s+(\w+)\s*=/);
+        if (match) boxNames.push(match[1]);
+      });
+      
+      const sourceName = boxNames[meshIndex] || 'box1';
+      const newVarName = `extruded_${operationCount}`;
+      
+      // Add extrude operation to code
+      const newLine = `let ${newVarName} = extrude(${sourceName}.face.${faceName}, distance: ${distance.toFixed(2)})`;
+      const newCode = kclCode + '\n' + newLine;
+      
+      setOperationCount(prev => prev + 1);
+      
+      // For now, since we don't have actual extrude implementation,
+      // we'll create a new box that simulates the extrusion
+      const simulatedCode = kclCode + '\n' + 
+        `// Extrude operation: ${newLine}\n` +
+        `let ${newVarName} = box(size: [${Math.abs(distance).toFixed(2)}, ${Math.abs(distance).toFixed(2)}, ${Math.abs(distance).toFixed(2)}], center: [${(normalX * distance).toFixed(2)}, ${(normalY * distance).toFixed(2)}, ${(normalZ * distance).toFixed(2)}])`;
+      
+      handleSubmitCode(simulatedCode);
+    }
+  }, [kclCode, operationCount, handleSubmitCode]);
 
   // URL 파라미터로 초기 코드 로드 (테스트용)
   React.useEffect(() => {
@@ -629,7 +781,7 @@ export default function Page() {
       <div className="flex flex-1 overflow-hidden min-h-0">
         <SidebarNav />
         <FileTree />
-        <Viewport preview={preview} />
+        <Viewport preview={preview} onApplyOperation={handleApplyOperation} />
         <ChatPanel onSubmitCode={handleSubmitCode} kclCode={kclCode} />
       </div>
     </>
