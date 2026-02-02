@@ -8,6 +8,8 @@ import { union, subtract, intersect, type BooleanOperation } from '@/lib/boolean
 import { revolve } from '@/lib/revolveEngine';
 import { linearPattern, circularPattern } from '@/lib/patternEngine';
 import { shellBoxSimple } from '@/lib/shellBoxSimple';
+import { torus, helix } from '@/lib/advancedPrimitives';
+import { mirror, scale, rotate, translate } from '@/lib/transformEngine';
 
 export interface ArtifactGraph {
   artifacts: string[];
@@ -630,6 +632,129 @@ export function buildArtifactGraphFromGeometry(spec: GeometrySpec): ArtifactGrap
       }
     } catch (e) {
       console.error('Shell operation failed:', e instanceof Error ? e.message : String(e));
+    }
+  }
+  
+  // Process Torus primitives
+  for (const tor of spec.toruses || []) {
+    try {
+      const result = torus(
+        tor.majorRadius,
+        tor.minorRadius,
+        tor.center,
+        tor.majorSegments || 32,
+        tor.minorSegments || 16
+      );
+      
+      artifacts.push(tor.id);
+      nodes[tor.id] = {
+        id: tor.id,
+        type: 'solid',
+        geometry: { vertices: result.vertices, indices: result.indices },
+      };
+    } catch (e) {
+      console.error('Torus failed:', e instanceof Error ? e.message : String(e));
+    }
+  }
+  
+  // Process Helix primitives
+  for (const hel of spec.helixes || []) {
+    try {
+      const result = helix(
+        hel.radius,
+        hel.pitch,
+        hel.turns,
+        hel.tubeRadius,
+        hel.center,
+        hel.segments || 32,
+        hel.tubeSegments || 8
+      );
+      
+      artifacts.push(hel.id);
+      nodes[hel.id] = {
+        id: hel.id,
+        type: 'solid',
+        geometry: { vertices: result.vertices, indices: result.indices },
+      };
+    } catch (e) {
+      console.error('Helix failed:', e instanceof Error ? e.message : String(e));
+    }
+  }
+  
+  // Process Mirror operations
+  for (const mir of spec.mirrors || []) {
+    const sourceNode = nodes[mir.sourceId];
+    if (!sourceNode?.geometry) continue;
+    
+    try {
+      const result = mirror(
+        sourceNode.geometry.vertices,
+        sourceNode.geometry.indices,
+        mir.plane,
+        mir.keepOriginal ?? true
+      );
+      
+      // Update source node with mirrored result
+      sourceNode.geometry = { vertices: result.vertices, indices: result.indices };
+    } catch (e) {
+      console.error('Mirror failed:', e instanceof Error ? e.message : String(e));
+    }
+  }
+  
+  // Process Scale operations
+  for (const scl of spec.scales || []) {
+    const sourceNode = nodes[scl.sourceId];
+    if (!sourceNode?.geometry) continue;
+    
+    try {
+      const result = scale(
+        sourceNode.geometry.vertices,
+        sourceNode.geometry.indices,
+        scl.scale,
+        scl.center || [0, 0, 0]
+      );
+      
+      sourceNode.geometry = { vertices: result.vertices, indices: result.indices };
+    } catch (e) {
+      console.error('Scale failed:', e instanceof Error ? e.message : String(e));
+    }
+  }
+  
+  // Process Rotate operations
+  for (const rot of spec.rotates || []) {
+    const sourceNode = nodes[rot.sourceId];
+    if (!sourceNode?.geometry) continue;
+    
+    try {
+      const result = rotate(
+        sourceNode.geometry.vertices,
+        sourceNode.geometry.indices,
+        rot.axis,
+        rot.angle,
+        rot.center || [0, 0, 0]
+      );
+      
+      sourceNode.geometry = { vertices: result.vertices, indices: result.indices };
+    } catch (e) {
+      console.error('Rotate failed:', e instanceof Error ? e.message : String(e));
+    }
+  }
+  
+  // Process Translate operations
+  for (const trans of spec.translates || []) {
+    const sourceNode = nodes[trans.sourceId];
+    if (!sourceNode?.geometry) continue;
+    
+    try {
+      const result = translate(
+        sourceNode.geometry.vertices,
+        sourceNode.geometry.indices,
+        trans.offset
+      );
+      
+      sourceNode.geometry = { vertices: result.vertices, indices: result.indices };
+    } catch (e) {
+      console.error('Translate failed:', e instanceof Error ? e.message : String(e));
     }
   }
   

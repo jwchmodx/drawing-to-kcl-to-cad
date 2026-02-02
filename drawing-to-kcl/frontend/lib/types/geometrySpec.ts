@@ -102,6 +102,57 @@ export interface ShellSpec {
   openFaces?: number[];  // face indices to leave open
 }
 
+// Torus (donut)
+export interface TorusSpec {
+  id: string;
+  majorRadius: number;
+  minorRadius: number;
+  center: [number, number, number];
+  majorSegments?: number;
+  minorSegments?: number;
+}
+
+// Helix (spiral)
+export interface HelixSpec {
+  id: string;
+  radius: number;
+  pitch: number;
+  turns: number;
+  tubeRadius: number;
+  center: [number, number, number];
+  segments?: number;
+  tubeSegments?: number;
+}
+
+// Transform operations
+export interface MirrorSpec {
+  id: string;
+  sourceId: string;
+  plane: 'xy' | 'xz' | 'yz' | [number, number, number];
+  keepOriginal?: boolean;
+}
+
+export interface ScaleSpec {
+  id: string;
+  sourceId: string;
+  scale: number | [number, number, number];
+  center?: [number, number, number];
+}
+
+export interface RotateSpec {
+  id: string;
+  sourceId: string;
+  axis: [number, number, number];
+  angle: number;
+  center?: [number, number, number];
+}
+
+export interface TranslateSpec {
+  id: string;
+  sourceId: string;
+  offset: [number, number, number];
+}
+
 export interface GeometrySpec {
   artifacts: string[];
   boxes: BoxSpec[];
@@ -116,6 +167,12 @@ export interface GeometrySpec {
   linearPatterns: LinearPatternSpec[];
   circularPatterns: CircularPatternSpec[];
   shells: ShellSpec[];
+  toruses: TorusSpec[];
+  helixes: HelixSpec[];
+  mirrors: MirrorSpec[];
+  scales: ScaleSpec[];
+  rotates: RotateSpec[];
+  translates: TranslateSpec[];
 }
 
 // Face reference for extrude operations

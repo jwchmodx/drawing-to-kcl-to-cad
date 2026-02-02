@@ -29,7 +29,13 @@ import type {
   RevolveSpec,
   LinearPatternSpec,
   CircularPatternSpec,
-  ShellSpec
+  ShellSpec,
+  TorusSpec,
+  HelixSpec,
+  MirrorSpec,
+  ScaleSpec,
+  RotateSpec,
+  TranslateSpec
 } from '@/lib/types/geometrySpec';
 
 // ═══════════════════════════════════════════════════════════════
@@ -92,6 +98,30 @@ const CIRCULAR_PATTERN_REG =
 // Shell: let name = shell(source, thickness: n, open_faces: [n, ...]?)
 const SHELL_REG =
   /let\s+(\w+)\s*=\s*shell\s*\(\s*(\w+)\s*,\s*thickness\s*:\s*([-\d.e]+)(?:\s*,\s*open_faces\s*:\s*\[\s*([\d,\s]*)\])?\s*\)/gi;
+
+// Torus: let name = torus(major_radius: n, minor_radius: n, center: [x,y,z])
+const TORUS_REG =
+  /let\s+(\w+)\s*=\s*torus\s*\(\s*major_radius\s*:\s*([-\d.e]+)\s*,\s*minor_radius\s*:\s*([-\d.e]+)\s*,\s*center\s*:\s*\[\s*([-\d.e]+)\s*,\s*([-\d.e]+)\s*,\s*([-\d.e]+)\s*\]\s*\)/gi;
+
+// Helix: let name = helix(radius: n, pitch: n, turns: n, tube_radius: n, center: [x,y,z])
+const HELIX_REG =
+  /let\s+(\w+)\s*=\s*helix\s*\(\s*radius\s*:\s*([-\d.e]+)\s*,\s*pitch\s*:\s*([-\d.e]+)\s*,\s*turns\s*:\s*([-\d.e]+)\s*,\s*tube_radius\s*:\s*([-\d.e]+)\s*,\s*center\s*:\s*\[\s*([-\d.e]+)\s*,\s*([-\d.e]+)\s*,\s*([-\d.e]+)\s*\]\s*\)/gi;
+
+// Mirror: let name = mirror(source, plane: 'yz')
+const MIRROR_REG =
+  /let\s+(\w+)\s*=\s*mirror\s*\(\s*(\w+)\s*,\s*plane\s*:\s*['"]?(xy|xz|yz)['"]?\s*\)/gi;
+
+// Scale: let name = scale(source, factor: n) or scale(source, factor: [x,y,z])
+const SCALE_REG =
+  /let\s+(\w+)\s*=\s*scale\s*\(\s*(\w+)\s*,\s*factor\s*:\s*([-\d.e]+|\[\s*[-\d.e]+\s*,\s*[-\d.e]+\s*,\s*[-\d.e]+\s*\])\s*\)/gi;
+
+// Rotate: let name = rotate(source, axis: [x,y,z], angle: n)
+const ROTATE_REG =
+  /let\s+(\w+)\s*=\s*rotate\s*\(\s*(\w+)\s*,\s*axis\s*:\s*\[\s*([-\d.e]+)\s*,\s*([-\d.e]+)\s*,\s*([-\d.e]+)\s*\]\s*,\s*angle\s*:\s*([-\d.e]+)\s*\)/gi;
+
+// Translate: let name = translate(source, offset: [x,y,z])
+const TRANSLATE_REG =
+  /let\s+(\w+)\s*=\s*translate\s*\(\s*(\w+)\s*,\s*offset\s*:\s*\[\s*([-\d.e]+)\s*,\s*([-\d.e]+)\s*,\s*([-\d.e]+)\s*\]\s*\)/gi;
 
 // ═══════════════════════════════════════════════════════════════
 // PARSE HELPERS
@@ -366,6 +396,104 @@ function extractShellFromLine(line: string): ShellSpec | null {
   };
 }
 
+function extractTorusFromLine(line: string): TorusSpec | null {
+  TORUS_REG.lastIndex = 0;
+  const m = TORUS_REG.exec(line);
+  if (!m) return null;
+  const [, name, major, minor, cx, cy, cz] = m;
+  if (!name) return null;
+  
+  const majorRadius = parseNum(major!);
+  const minorRadius = parseNum(minor!);
+  const center: [number, number, number] = [parseNum(cx!), parseNum(cy!), parseNum(cz!)];
+  
+  if (Number.isNaN(majorRadius) || Number.isNaN(minorRadius) || center.some(Number.isNaN)) return null;
+  
+  return { id: `solid:${name}`, majorRadius, minorRadius, center };
+}
+
+function extractHelixFromLine(line: string): HelixSpec | null {
+  HELIX_REG.lastIndex = 0;
+  const m = HELIX_REG.exec(line);
+  if (!m) return null;
+  const [, name, r, p, t, tr, cx, cy, cz] = m;
+  if (!name) return null;
+  
+  const radius = parseNum(r!);
+  const pitch = parseNum(p!);
+  const turns = parseNum(t!);
+  const tubeRadius = parseNum(tr!);
+  const center: [number, number, number] = [parseNum(cx!), parseNum(cy!), parseNum(cz!)];
+  
+  if ([radius, pitch, turns, tubeRadius].some(Number.isNaN) || center.some(Number.isNaN)) return null;
+  
+  return { id: `solid:${name}`, radius, pitch, turns, tubeRadius, center };
+}
+
+function extractMirrorFromLine(line: string): MirrorSpec | null {
+  MIRROR_REG.lastIndex = 0;
+  const m = MIRROR_REG.exec(line);
+  if (!m) return null;
+  const [, name, source, plane] = m;
+  if (!name || !source || !plane) return null;
+  
+  return {
+    id: `solid:${name}`,
+    sourceId: `solid:${source}`,
+    plane: plane as 'xy' | 'xz' | 'yz',
+    keepOriginal: true,
+  };
+}
+
+function extractScaleFromLine(line: string): ScaleSpec | null {
+  SCALE_REG.lastIndex = 0;
+  const m = SCALE_REG.exec(line);
+  if (!m) return null;
+  const [, name, source, factorStr] = m;
+  if (!name || !source || !factorStr) return null;
+  
+  let scale: number | [number, number, number];
+  if (factorStr.startsWith('[')) {
+    const parts = factorStr.replace(/[\[\]]/g, '').split(',').map(s => parseNum(s.trim()));
+    if (parts.length !== 3 || parts.some(Number.isNaN)) return null;
+    scale = parts as [number, number, number];
+  } else {
+    scale = parseNum(factorStr);
+    if (Number.isNaN(scale)) return null;
+  }
+  
+  return { id: `solid:${name}`, sourceId: `solid:${source}`, scale };
+}
+
+function extractRotateFromLine(line: string): RotateSpec | null {
+  ROTATE_REG.lastIndex = 0;
+  const m = ROTATE_REG.exec(line);
+  if (!m) return null;
+  const [, name, source, ax, ay, az, angleStr] = m;
+  if (!name || !source) return null;
+  
+  const axis: [number, number, number] = [parseNum(ax!), parseNum(ay!), parseNum(az!)];
+  const angle = parseNum(angleStr!);
+  
+  if (axis.some(Number.isNaN) || Number.isNaN(angle)) return null;
+  
+  return { id: `solid:${name}`, sourceId: `solid:${source}`, axis, angle };
+}
+
+function extractTranslateFromLine(line: string): TranslateSpec | null {
+  TRANSLATE_REG.lastIndex = 0;
+  const m = TRANSLATE_REG.exec(line);
+  if (!m) return null;
+  const [, name, source, ox, oy, oz] = m;
+  if (!name || !source) return null;
+  
+  const offset: [number, number, number] = [parseNum(ox!), parseNum(oy!), parseNum(oz!)];
+  
+  if (offset.some(Number.isNaN)) return null;
+  
+  return { id: `solid:${name}`, sourceId: `solid:${source}`, offset };
+}
+
 // ═══════════════════════════════════════════════════════════════
 // MAIN PARSER
 // ═══════════════════════════════════════════════════════════════
@@ -384,6 +512,12 @@ export function buildGeometrySpecFromKcl(kclCode: string): GeometrySpec {
   const linearPatterns: LinearPatternSpec[] = [];
   const circularPatterns: CircularPatternSpec[] = [];
   const shells: ShellSpec[] = [];
+  const toruses: TorusSpec[] = [];
+  const helixes: HelixSpec[] = [];
+  const mirrors: MirrorSpec[] = [];
+  const scales: ScaleSpec[] = [];
+  const rotates: RotateSpec[] = [];
+  const translates: TranslateSpec[] = [];
   const seen = new Set<string>();
 
   const lines = kclCode.split('\n');
@@ -491,6 +625,56 @@ export function buildGeometrySpecFromKcl(kclCode: string): GeometrySpec {
       shells.push(shell);
       continue;
     }
+    
+    // Torus
+    const tor = extractTorusFromLine(line);
+    if (tor && !seen.has(tor.id)) {
+      seen.add(tor.id);
+      artifacts.push(tor.id);
+      toruses.push(tor);
+      continue;
+    }
+    
+    // Helix
+    const hel = extractHelixFromLine(line);
+    if (hel && !seen.has(hel.id)) {
+      seen.add(hel.id);
+      artifacts.push(hel.id);
+      helixes.push(hel);
+      continue;
+    }
+    
+    // Mirror
+    const mir = extractMirrorFromLine(line);
+    if (mir && !seen.has(mir.id)) {
+      seen.add(mir.id);
+      mirrors.push(mir);
+      continue;
+    }
+    
+    // Scale
+    const scl = extractScaleFromLine(line);
+    if (scl && !seen.has(scl.id)) {
+      seen.add(scl.id);
+      scales.push(scl);
+      continue;
+    }
+    
+    // Rotate
+    const rot = extractRotateFromLine(line);
+    if (rot && !seen.has(rot.id)) {
+      seen.add(rot.id);
+      rotates.push(rot);
+      continue;
+    }
+    
+    // Translate
+    const trans = extractTranslateFromLine(line);
+    if (trans && !seen.has(trans.id)) {
+      seen.add(trans.id);
+      translates.push(trans);
+      continue;
+    }
   }
 
   // Also check geom comments
@@ -544,7 +728,13 @@ export function buildGeometrySpecFromKcl(kclCode: string): GeometrySpec {
     revolves,
     linearPatterns,
     circularPatterns,
-    shells
+    shells,
+    toruses,
+    helixes,
+    mirrors,
+    scales,
+    rotates,
+    translates
   };
 }
 
