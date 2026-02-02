@@ -192,7 +192,7 @@ export const KclPreview3D: React.FC<KclPreview3DProps> = ({
       const height = containerRef.current.clientHeight || 300;
 
       const scene = new THREE.Scene();
-      scene.background = new THREE.Color(0x08090b);
+      scene.background = new THREE.Color(0x09090b);
       
       // Compute combined bounding box
       const allVertices = meshPreviews.flatMap(m => m.vertices);
@@ -213,6 +213,7 @@ export const KclPreview3D: React.FC<KclPreview3DProps> = ({
 
       renderer = new THREE.WebGLRenderer({ antialias: true });
       renderer.setSize(width, height);
+      renderer.setClearColor(0x09090b, 1);
       containerRef.current.innerHTML = '';
       containerRef.current.appendChild(renderer.domElement);
 
@@ -241,9 +242,11 @@ export const KclPreview3D: React.FC<KclPreview3DProps> = ({
         geometry.computeVertexNormals();
         geometries.push(geometry);
 
-        const material = new THREE.MeshBasicMaterial({ 
-          color: 0xffaa44,  // Brighter orange, no lighting effects
+        const material = new THREE.MeshStandardMaterial({ 
+          color: 0xffaa44,
+          flatShading: true,
         });
+        material.needsUpdate = true;
         materials.push(material);
         
         const mesh = new THREE.Mesh(geometry, material);
@@ -272,8 +275,7 @@ export const KclPreview3D: React.FC<KclPreview3DProps> = ({
       });
 
       controls = new OrbitControls(camera, renderer.domElement);
-      controls.enableDamping = true;
-      controls.dampingFactor = 0.05;
+      controls.enableDamping = false;
 
       // Store references for raycasting
       sceneRef.current = {
