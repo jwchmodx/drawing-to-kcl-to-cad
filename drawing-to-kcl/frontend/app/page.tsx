@@ -4,6 +4,7 @@ import React, { useState, useCallback, useRef } from 'react';
 import { KclPreview3D, FaceSelection } from '@/components/KclPreview3D';
 import { buildGeometrySpecFromKcl, exportToSTL, exportToSTLBinary, exportToSTEP } from '@/lib/geometryRuntime';
 import { buildArtifactGraphFromGeometry, extractMeshes } from '@/lib/types/artifactGraph';
+import { importSTLFile, meshToApproximateKCL, normalizeMesh } from '@/lib/stlImporter';
 
 // KCL 코드를 프리뷰 데이터로 변환
 function kclCodeToPreview(kclCode: string) {
@@ -255,23 +256,92 @@ function SidebarNav() {
 // ═══════════════════════════════════════════════════════════════
 // FILE TREE COMPONENT
 // ═══════════════════════════════════════════════════════════════
-function FileTree() {
+interface ImportedFile {
+  name: string;
+  type: 'stl' | 'kcl';
+  data: {
+    vertices?: [number, number, number][];
+    indices?: number[];
+    kclCode?: string;
+  };
+}
+
+interface FileTreeProps {
+  importedFiles: ImportedFile[];
+  onFileImport: (file: File) => void;
+  onFileSelect: (file: ImportedFile) => void;
+  selectedFile: ImportedFile | null;
+}
+
+function FileTree({ importedFiles, onFileImport, onFileSelect, selectedFile }: FileTreeProps) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({
     'chair': true,
     'meshes': true,
+    'imported': true,
   });
+  const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const toggleExpand = (id: string) => {
     setExpanded(prev => ({ ...prev, [id]: !prev[id] }));
   };
 
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const files = Array.from(e.dataTransfer.files);
+    files.forEach(file => {
+      if (file.name.endsWith('.stl') || file.name.endsWith('.kcl')) {
+        onFileImport(file);
+      }
+    });
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = () => {
+    setIsDragging(false);
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files) {
+      Array.from(files).forEach(file => onFileImport(file));
+    }
+  };
+
   return (
-    <aside className="w-60 flex flex-col bg-surface border-r border-white/5 shrink-0">
+    <aside 
+      className={`w-60 flex flex-col bg-surface border-r border-white/5 shrink-0 ${isDragging ? 'ring-2 ring-cyan ring-inset' : ''}`}
+      onDrop={handleDrop}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+    >
       <div className="panel-header px-4 py-3 flex items-center justify-between">
         <span className="text-xs font-semibold text-text-muted uppercase tracking-wider">Explorer</span>
-        <button className="btn-ghost p-1 rounded">
-          <Icon name="more_horiz" className="text-base" />
-        </button>
+        <div className="flex gap-1">
+          <button 
+            onClick={() => fileInputRef.current?.click()}
+            className="btn-ghost p-1 rounded hover:bg-cyan/20 hover:text-cyan"
+            title="Import STL/KCL"
+          >
+            <Icon name="upload_file" className="text-base" />
+          </button>
+          <button className="btn-ghost p-1 rounded">
+            <Icon name="more_horiz" className="text-base" />
+          </button>
+        </div>
+        <input 
+          ref={fileInputRef}
+          type="file" 
+          accept=".stl,.kcl" 
+          multiple 
+          className="hidden" 
+          onChange={handleFileSelect}
+        />
       </div>
 
       <div className="flex-1 overflow-y-auto px-2 py-2">
@@ -320,6 +390,48 @@ function FileTree() {
                 <Icon name="lightbulb" className="text-base text-orange" />
                 <span className="text-[13px] text-text-muted">Lights</span>
               </button>
+            </div>
+          )}
+
+          {/* Imported Files Section */}
+          {importedFiles.length > 0 && (
+            <>
+              <button
+                onClick={() => toggleExpand('imported')}
+                className="tree-item flex items-center gap-2 w-full px-2 py-1.5 rounded-md mt-2"
+              >
+                <Icon name={expanded['imported'] ? 'keyboard_arrow_down' : 'keyboard_arrow_right'} className="text-base text-text-dim" />
+                <Icon name="cloud_upload" className="text-base text-green" />
+                <span className="text-[13px] text-text">Imported ({importedFiles.length})</span>
+              </button>
+
+              {expanded['imported'] && (
+                <div className="ml-4 border-l border-white/5 pl-2">
+                  {importedFiles.map((file, i) => (
+                    <button
+                      key={`${file.name}-${i}`}
+                      onClick={() => onFileSelect(file)}
+                      className={`tree-item flex items-center gap-2 w-full px-2 py-1.5 rounded-md ${
+                        selectedFile?.name === file.name ? 'active bg-cyan/10' : ''
+                      }`}
+                    >
+                      <Icon 
+                        name={file.type === 'stl' ? 'view_in_ar' : 'code'} 
+                        className={`text-base ${file.type === 'stl' ? 'text-orange' : 'text-cyan'}`} 
+                      />
+                      <span className="text-[13px] text-text-muted truncate">{file.name}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+
+          {/* Drop Zone Hint */}
+          {isDragging && (
+            <div className="mt-4 p-4 border-2 border-dashed border-cyan/50 rounded-lg text-center">
+              <Icon name="cloud_upload" className="text-2xl text-cyan mb-2" />
+              <p className="text-xs text-cyan">Drop STL/KCL files here</p>
             </div>
           )}
         </div>
@@ -831,6 +943,94 @@ export default function Page() {
   const [operationCount, setOperationCount] = useState(0);
   const [showExportModal, setShowExportModal] = useState(false);
   const previewDataRef = useRef<ReturnType<typeof kclCodeToPreview> | null>(null);
+  const [importedFiles, setImportedFiles] = useState<ImportedFile[]>([]);
+  const [selectedImportedFile, setSelectedImportedFile] = useState<ImportedFile | null>(null);
+
+  // Handle file import (STL or KCL)
+  const handleFileImport = useCallback(async (file: File) => {
+    try {
+      if (file.name.endsWith('.stl')) {
+        const mesh = await importSTLFile(file);
+        const normalizedMesh = normalizeMesh(mesh);
+        const kclApprox = meshToApproximateKCL(mesh, file.name.replace('.stl', ''));
+        
+        const importedFile: ImportedFile = {
+          name: file.name,
+          type: 'stl',
+          data: {
+            vertices: normalizedMesh.vertices,
+            indices: normalizedMesh.indices,
+            kclCode: kclApprox,
+          }
+        };
+        
+        setImportedFiles(prev => [...prev, importedFile]);
+        
+        // Show the imported mesh directly
+        setPreview({
+          meshes: [{
+            id: file.name,
+            vertices: normalizedMesh.vertices,
+            indices: normalizedMesh.indices,
+          }]
+        });
+        
+        // Also set approximate KCL code
+        setKclCode(kclApprox);
+        
+      } else if (file.name.endsWith('.kcl')) {
+        const text = await file.text();
+        
+        const importedFile: ImportedFile = {
+          name: file.name,
+          type: 'kcl',
+          data: { kclCode: text }
+        };
+        
+        setImportedFiles(prev => [...prev, importedFile]);
+        setKclCode(text);
+        
+        // Parse and preview
+        try {
+          const newPreview = kclCodeToPreview(text);
+          previewDataRef.current = newPreview;
+          setPreview({ meshes: newPreview.meshes });
+        } catch (e) {
+          console.error('KCL parse error:', e);
+        }
+      }
+    } catch (error) {
+      console.error('File import error:', error);
+      alert(`Failed to import ${file.name}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }, []);
+
+  // Handle selecting an imported file
+  const handleFileSelect = useCallback((file: ImportedFile) => {
+    setSelectedImportedFile(file);
+    
+    if (file.type === 'stl' && file.data.vertices && file.data.indices) {
+      setPreview({
+        meshes: [{
+          id: file.name,
+          vertices: file.data.vertices,
+          indices: file.data.indices,
+        }]
+      });
+      if (file.data.kclCode) {
+        setKclCode(file.data.kclCode);
+      }
+    } else if (file.type === 'kcl' && file.data.kclCode) {
+      setKclCode(file.data.kclCode);
+      try {
+        const newPreview = kclCodeToPreview(file.data.kclCode);
+        previewDataRef.current = newPreview;
+        setPreview({ meshes: newPreview.meshes });
+      } catch (e) {
+        console.error('KCL parse error:', e);
+      }
+    }
+  }, []);
 
   const handleSubmitCode = useCallback((code: string) => {
     setKclCode(code);
@@ -947,7 +1147,12 @@ export default function Page() {
       <Header onExportClick={() => setShowExportModal(true)} />
       <div className="flex flex-1 overflow-hidden min-h-0">
         <SidebarNav />
-        <FileTree />
+        <FileTree 
+          importedFiles={importedFiles}
+          onFileImport={handleFileImport}
+          onFileSelect={handleFileSelect}
+          selectedFile={selectedImportedFile}
+        />
         <Viewport preview={preview} onApplyOperation={handleApplyOperation} />
         <ChatPanel onSubmitCode={handleSubmitCode} kclCode={kclCode} />
       </div>
