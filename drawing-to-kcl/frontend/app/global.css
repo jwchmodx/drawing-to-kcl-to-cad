@@ -1,52 +1,20 @@
-@import 'tailwindcss';
-
-@source "../components";
-@source ".";
-
-@theme {
-  /* Neo-Industrial Color System */
-  --color-void: #08090b;
-  --color-surface: #0d1117;
-  --color-elevated: #151b23;
-  --color-raised: #1c232d;
-
-  /* Accent Colors */
-  --color-cyan: #00d4ff;
-  --color-cyan-dim: #0099cc;
-  --color-orange: #ff6b35;
-  --color-green: #00ff88;
-  --color-red: #ff3366;
-
-  /* Text */
-  --color-text: #e6edf3;
-  --color-text-muted: #7d8590;
-  --color-text-dim: #484f58;
-
-  /* Legacy compatibility */
-  --color-primary: #00d4ff;
-  --color-background-dark: #08090b;
-
-  /* Typography */
-  --font-mono: "JetBrains Mono", "Fira Code", monospace;
-  --font-display: "Outfit", system-ui, sans-serif;
-}
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
 @layer base {
   html {
-    background-color: var(--color-void);
+    background-color: theme('colors.void');
     height: 100%;
   }
 
   body {
-    background-color: var(--color-void);
-    color: var(--color-text);
+    background-color: theme('colors.void');
+    color: theme('colors.text');
     min-height: 100vh;
     height: 100%;
-    font-family: var(--font-display);
+    font-family: theme('fontFamily.display');
     margin: 0;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
@@ -62,12 +30,12 @@
   }
 
   ::-webkit-scrollbar-thumb {
-    background: var(--color-text-dim);
+    background: theme('colors.text-dim');
     border-radius: 3px;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background: var(--color-text-muted);
+    background: theme('colors.text-muted');
   }
 }
 
@@ -75,7 +43,7 @@
    VIEWPORT GRID - Infinite 3D space illusion
    ═══════════════════════════════════════════════════════════════ */
 .viewport-grid {
-  background-color: var(--color-void);
+  background-color: theme('colors.void');
   background-image:
     /* Major grid lines */
     linear-gradient(to right, rgba(0, 212, 255, 0.08) 1px, transparent 1px),
@@ -92,7 +60,7 @@
   content: '';
   position: absolute;
   inset: 0;
-  background: radial-gradient(ellipse at center, transparent 0%, var(--color-void) 70%);
+  background: radial-gradient(ellipse at center, transparent 0%, theme('colors.void') 70%);
   pointer-events: none;
 }
 
@@ -155,7 +123,7 @@
    PANEL SYSTEM
    ═══════════════════════════════════════════════════════════════ */
 .panel {
-  background: var(--color-surface);
+  background: theme('colors.surface');
   border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
@@ -237,7 +205,7 @@
    TERMINAL / COMMAND STYLES
    ═══════════════════════════════════════════════════════════════ */
 .terminal-text {
-  font-family: var(--font-mono);
+  font-family: theme('fontFamily.mono');
   font-size: 12px;
   letter-spacing: -0.02em;
 }
@@ -262,20 +230,20 @@
 .btn-ghost {
   background: transparent;
   border: 1px solid transparent;
-  color: var(--color-text-muted);
+  color: theme('colors.text-muted');
   transition: all 0.15s ease;
 }
 
 .btn-ghost:hover {
   background: rgba(255, 255, 255, 0.05);
-  color: var(--color-text);
+  color: theme('colors.text');
   border-color: rgba(255, 255, 255, 0.1);
 }
 
 .btn-primary {
-  background: linear-gradient(135deg, var(--color-cyan) 0%, var(--color-cyan-dim) 100%);
+  background: linear-gradient(135deg, theme('colors.cyan') 0%, theme('colors.cyan-dim') 100%);
   border: none;
-  color: var(--color-void);
+  color: theme('colors.void');
   font-weight: 600;
   transition: all 0.15s ease;
 }
@@ -299,7 +267,7 @@
 
 .tree-item.active {
   background: rgba(0, 212, 255, 0.1);
-  border-left-color: var(--color-cyan);
+  border-left-color: theme('colors.cyan');
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -366,7 +334,7 @@
 }
 
 .progress-fill {
-  background: linear-gradient(90deg, var(--color-cyan), var(--color-cyan-dim));
-  box-shadow: 0 0 10px var(--color-cyan);
+  background: linear-gradient(90deg, theme('colors.cyan'), theme('colors.cyan-dim'));
+  box-shadow: 0 0 10px theme('colors.cyan');
   transition: width 0.3s ease;
 }

@@ -1,6 +1,17 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
+import { KclPreview3D } from '@/components/KclPreview3D';
+import { buildGeometrySpecFromKcl } from '@/lib/geometryRuntime';
+import { buildArtifactGraphFromGeometry, extractMeshes } from '@/lib/types/artifactGraph';
+
+// KCL 코드를 프리뷰 데이터로 변환
+function kclCodeToPreview(kclCode: string) {
+  const spec = buildGeometrySpecFromKcl(kclCode);
+  const graph = buildArtifactGraphFromGeometry(spec);
+  const meshes = extractMeshes(graph);
+  return { meshes: meshes.map(m => ({ id: m.id, vertices: m.vertices as [number, number, number][], indices: m.indices })) };
+}
 
 // ═══════════════════════════════════════════════════════════════
 // ICON COMPONENT - Consistent Material Symbols
@@ -24,9 +35,6 @@ function Header() {
         <div className="flex items-center gap-2.5">
           <div className="relative size-7 flex items-center justify-center">
             <div className="absolute inset-0 bg-cyan/20 rounded-md blur-sm" />
-            {/* <svg viewBox="0 0 24 24" className="size-5 text-cyan relative" fill="currentColor">
-              <path d="M12 2L2 7v10l10 5 10-5V7L12 2zm0 2.18l6.9 3.45L12 11.09 5.1 7.63 12 4.18zM4 8.82l7 3.5v7.36l-7-3.5V8.82zm9 10.86v-7.36l7-3.5v7.36l-7 3.5z"/>
-            </svg> */}
           </div>
           <span className="text-sm font-semibold tracking-tight text-text">FORGE</span>
           <span className="text-[10px] font-medium text-cyan bg-cyan/10 px-1.5 py-0.5 rounded">BETA</span>
@@ -72,7 +80,6 @@ function Header() {
 
       {/* Right: Actions */}
       <div className="flex items-center gap-3">
-        {/* Command Palette Trigger */}
         <button className="flex items-center gap-2 px-3 py-1.5 text-xs text-text-muted bg-void border border-white/5 rounded-lg hover:border-white/10 hover:text-text transition-all">
           <Icon name="search" className="text-sm" />
           <span>Search...</span>
@@ -100,22 +107,22 @@ function Header() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// SIDEBAR NAVIGATION
+// SIDEBAR NAV COMPONENT
 // ═══════════════════════════════════════════════════════════════
 function SidebarNav() {
-  const [activeItem, setActiveItem] = useState('explorer');
+  const [activeItem, setActiveItem] = useState('files');
 
   const items = [
-    { id: 'home', icon: 'home', label: 'Home' },
-    { id: 'explorer', icon: 'folder_open', label: 'Explorer' },
-    { id: 'objects', icon: 'deployed_code', label: '3D Objects' },
-    { id: 'layers', icon: 'layers', label: 'Layers' },
-    { id: 'materials', icon: 'palette', label: 'Materials' },
+    { id: 'home', icon: 'home' },
+    { id: 'files', icon: 'folder_open' },
+    { id: 'objects', icon: 'deployed_code' },
+    { id: 'layers', icon: 'layers' },
+    { id: 'materials', icon: 'palette' },
   ];
 
   const bottomItems = [
-    { id: 'extensions', icon: 'extension', label: 'Extensions' },
-    { id: 'settings', icon: 'tune', label: 'Settings' },
+    { id: 'extensions', icon: 'extension' },
+    { id: 'settings', icon: 'tune' },
   ];
 
   return (
@@ -124,16 +131,12 @@ function SidebarNav() {
         <button
           key={item.id}
           onClick={() => setActiveItem(item.id)}
-          className={`relative p-2.5 rounded-lg transition-all group ${
+          className={`p-2.5 rounded-lg transition-all ${
             activeItem === item.id
-              ? 'text-cyan bg-cyan/10'
+              ? 'bg-cyan/10 text-cyan'
               : 'text-text-muted hover:text-text hover:bg-white/5'
           }`}
-          title={item.label}
         >
-          {activeItem === item.id && (
-            <div className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-4 bg-cyan rounded-r" />
-          )}
           <Icon name={item.icon} className="text-xl" />
         </button>
       ))}
@@ -143,9 +146,7 @@ function SidebarNav() {
       {bottomItems.map((item) => (
         <button
           key={item.id}
-          onClick={() => setActiveItem(item.id)}
           className="p-2.5 text-text-muted hover:text-text hover:bg-white/5 rounded-lg transition-all"
-          title={item.label}
         >
           <Icon name={item.icon} className="text-xl" />
         </button>
@@ -159,104 +160,82 @@ function SidebarNav() {
 // ═══════════════════════════════════════════════════════════════
 function FileTree() {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({
-    project: true,
-    meshes: true,
+    'chair': true,
+    'meshes': true,
   });
 
   const toggleExpand = (id: string) => {
-    setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
+    setExpanded(prev => ({ ...prev, [id]: !prev[id] }));
   };
 
   return (
     <aside className="w-60 flex flex-col bg-surface border-r border-white/5 shrink-0">
-      {/* Header */}
-      <div className="panel-header px-3 py-2.5 flex items-center justify-between">
-        <span className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">Explorer</span>
+      <div className="panel-header px-4 py-3 flex items-center justify-between">
+        <span className="text-xs font-semibold text-text-muted uppercase tracking-wider">Explorer</span>
         <button className="btn-ghost p-1 rounded">
-          <Icon name="more_horiz" className="text-base text-text-dim" />
+          <Icon name="more_horiz" className="text-base" />
         </button>
       </div>
 
-      {/* Tree */}
-      <div className="flex-1 overflow-y-auto py-1">
-        {/* Project Root */}
-        <div
-          className="tree-item flex items-center gap-1.5 px-3 py-1.5 cursor-pointer"
-          onClick={() => toggleExpand('project')}
-        >
-          <Icon
-            name={expanded.project ? 'keyboard_arrow_down' : 'keyboard_arrow_right'}
-            className="text-base text-text-dim"
-          />
-          <Icon name="inventory_2" className="text-base text-orange" />
-          <span className="text-[13px] font-medium text-text">Chair_v2</span>
+      <div className="flex-1 overflow-y-auto px-2 py-2">
+        <div className="space-y-0.5">
+          {/* Project Item */}
+          <button
+            onClick={() => toggleExpand('chair')}
+            className="tree-item flex items-center gap-2 w-full px-2 py-1.5 rounded-md"
+          >
+            <Icon name={expanded['chair'] ? 'keyboard_arrow_down' : 'keyboard_arrow_right'} className="text-base text-text-dim" />
+            <Icon name="inventory_2" className="text-base text-cyan" />
+            <span className="text-[13px] text-text">Chair_v2</span>
+          </button>
+
+          {expanded['chair'] && (
+            <div className="ml-4 border-l border-white/5 pl-2">
+              {/* Meshes Folder */}
+              <button
+                onClick={() => toggleExpand('meshes')}
+                className="tree-item flex items-center gap-2 w-full px-2 py-1.5 rounded-md"
+              >
+                <Icon name={expanded['meshes'] ? 'keyboard_arrow_down' : 'keyboard_arrow_right'} className="text-base text-text-dim" />
+                <Icon name="polyline" className="text-base text-orange" />
+                <span className="text-[13px] text-text-muted">Meshes</span>
+              </button>
+
+              {expanded['meshes'] && (
+                <div className="ml-4 border-l border-white/5 pl-2">
+                  {['Seat_Base', 'Back_Support', 'Armrest_L', 'Armrest_R'].map((mesh, i) => (
+                    <button
+                      key={mesh}
+                      className={`tree-item flex items-center gap-2 w-full px-2 py-1.5 rounded-md ${i === 0 ? 'active' : ''}`}
+                    >
+                      <Icon name="view_in_ar" className="text-base text-green" />
+                      <span className="text-[13px] text-text-muted">{mesh}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Other items */}
+              <button className="tree-item flex items-center gap-2 w-full px-2 py-1.5 rounded-md">
+                <Icon name="keyboard_arrow_right" className="text-base text-text-dim" />
+                <Icon name="texture" className="text-base text-cyan-dim" />
+                <span className="text-[13px] text-text-muted">Materials</span>
+              </button>
+              <button className="tree-item flex items-center gap-2 w-full px-2 py-1.5 rounded-md">
+                <Icon name="keyboard_arrow_right" className="text-base text-text-dim" />
+                <Icon name="lightbulb" className="text-base text-orange" />
+                <span className="text-[13px] text-text-muted">Lights</span>
+              </button>
+            </div>
+          )}
         </div>
-
-        {expanded.project && (
-          <div className="ml-3">
-            {/* Meshes */}
-            <div
-              className="tree-item flex items-center gap-1.5 px-3 py-1.5 cursor-pointer"
-              onClick={() => toggleExpand('meshes')}
-            >
-              <Icon
-                name={expanded.meshes ? 'keyboard_arrow_down' : 'keyboard_arrow_right'}
-                className="text-base text-text-dim"
-              />
-              <Icon name="polyline" className="text-base text-cyan" />
-              <span className="text-[13px] text-text-muted">Meshes</span>
-            </div>
-
-            {expanded.meshes && (
-              <div className="ml-3">
-                <div className="tree-item active flex items-center gap-1.5 px-3 py-1.5 cursor-pointer">
-                  <div className="w-4" />
-                  <Icon name="view_in_ar" className="text-base text-cyan" />
-                  <span className="text-[13px] text-text">Seat_Base</span>
-                </div>
-                <div className="tree-item flex items-center gap-1.5 px-3 py-1.5 cursor-pointer">
-                  <div className="w-4" />
-                  <Icon name="view_in_ar" className="text-base text-text-dim" />
-                  <span className="text-[13px] text-text-muted">Back_Support</span>
-                </div>
-                <div className="tree-item flex items-center gap-1.5 px-3 py-1.5 cursor-pointer">
-                  <div className="w-4" />
-                  <Icon name="view_in_ar" className="text-base text-text-dim" />
-                  <span className="text-[13px] text-text-muted">Armrest_L</span>
-                </div>
-                <div className="tree-item flex items-center gap-1.5 px-3 py-1.5 cursor-pointer">
-                  <div className="w-4" />
-                  <Icon name="view_in_ar" className="text-base text-text-dim" />
-                  <span className="text-[13px] text-text-muted">Armrest_R</span>
-                </div>
-              </div>
-            )}
-
-            {/* Materials */}
-            <div className="tree-item flex items-center gap-1.5 px-3 py-1.5 cursor-pointer">
-              <Icon name="keyboard_arrow_right" className="text-base text-text-dim" />
-              <Icon name="texture" className="text-base text-green" />
-              <span className="text-[13px] text-text-muted">Materials</span>
-            </div>
-
-            {/* Lights */}
-            <div className="tree-item flex items-center gap-1.5 px-3 py-1.5 cursor-pointer">
-              <Icon name="keyboard_arrow_right" className="text-base text-text-dim" />
-              <Icon name="lightbulb" className="text-base text-orange" />
-              <span className="text-[13px] text-text-muted">Lights</span>
-            </div>
-          </div>
-        )}
       </div>
 
-      {/* Footer Stats */}
-      <div className="px-3 py-3 border-t border-white/5">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-[10px] font-medium text-text-dim uppercase tracking-wider">Memory</span>
-          <span className="text-[10px] font-mono text-cyan">2.4 / 8 GB</span>
-        </div>
-        <div className="progress-bar h-1 rounded-full">
-          <div className="progress-fill h-full rounded-full" style={{ width: '30%' }} />
+      {/* Bottom stats */}
+      <div className="px-4 py-3 border-t border-white/5">
+        <div className="flex items-center justify-between text-[10px] text-text-dim">
+          <span className="uppercase tracking-wider">Memory</span>
+          <span className="font-mono text-cyan">2.4 / 8 GB</span>
         </div>
       </div>
     </aside>
@@ -266,8 +245,13 @@ function FileTree() {
 // ═══════════════════════════════════════════════════════════════
 // VIEWPORT COMPONENT
 // ═══════════════════════════════════════════════════════════════
-function Viewport() {
+interface ViewportProps {
+  preview: { meshes: { id?: string | null; vertices: [number, number, number][]; indices: number[] }[] } | null;
+}
+
+function Viewport({ preview }: ViewportProps) {
   const [activeTool, setActiveTool] = useState('select');
+  const hasPreview = preview && preview.meshes && preview.meshes.length > 0;
 
   const tools = [
     { id: 'select', icon: 'near_me', label: 'Select' },
@@ -314,41 +298,24 @@ function Viewport() {
         ))}
       </div>
 
-      {/* Viewport Grid */}
+      {/* Viewport Grid / 3D Preview */}
       <div className="flex-1 relative overflow-hidden viewport-grid flex items-center justify-center">
-        {/* 3D Object Placeholder */}
-        <div className="relative w-[450px] h-[450px] flex items-center justify-center">
-          {/* Ambient glow */}
-          <div className="absolute inset-0 bg-gradient-radial from-cyan/10 via-transparent to-transparent blur-3xl" />
-
-          {/* Simple 3D Chair visualization */}
-          <div className="relative flex flex-col items-center" style={{ transform: 'perspective(800px) rotateX(15deg) rotateY(-25deg)' }}>
-            {/* Seat back */}
-            <div className="w-36 h-40 bg-gradient-to-b from-elevated to-raised rounded-t-lg border border-cyan/30 relative shadow-2xl">
-              <div className="absolute inset-0 bg-gradient-to-br from-cyan/5 via-transparent to-transparent" />
-              <div className="absolute inset-2 border border-white/5 rounded" />
-            </div>
-            {/* Seat */}
-            <div className="w-40 h-8 bg-gradient-to-b from-raised to-elevated rounded-lg border border-cyan/20 -mt-1 relative shadow-xl">
-              <div className="absolute inset-0 bg-gradient-to-r from-cyan/5 via-transparent to-transparent" />
-            </div>
-            {/* Legs */}
-            <div className="flex w-36 justify-between px-2 -mt-0.5">
-              <div className="w-3 h-28 bg-gradient-to-b from-raised to-void rounded-b border border-white/10" />
-              <div className="w-3 h-28 bg-gradient-to-b from-raised to-void rounded-b border border-white/10" />
+        {hasPreview ? (
+          /* 3D Preview with KclPreview3D */
+          <div className="w-full h-full">
+            <KclPreview3D preview={preview} />
+          </div>
+        ) : (
+          /* Empty state */
+          <div className="relative flex flex-col items-center justify-center">
+            <div className="absolute inset-0 bg-gradient-radial from-cyan/10 via-transparent to-transparent blur-3xl" />
+            <div className="text-center text-text-muted relative z-10">
+              <Icon name="view_in_ar" className="text-6xl mb-4 text-cyan/30" />
+              <p className="text-sm">KCL 코드를 입력하면 3D 프리뷰가 표시됩니다</p>
+              <p className="text-xs mt-2 text-text-dim font-mono">예: let myBox = box(size: [1, 2, 3], center: [0, 0, 0])</p>
             </div>
           </div>
-
-          {/* Axis Gizmo */}
-          <div className="absolute bottom-16 right-16">
-            <div className="relative w-16 h-16">
-              <div className="absolute left-1/2 top-1/2 w-10 h-0.5 bg-gradient-to-r from-red to-transparent origin-left" style={{ transform: 'rotate(0deg)' }} />
-              <div className="absolute left-1/2 top-1/2 w-10 h-0.5 bg-gradient-to-r from-green to-transparent origin-left" style={{ transform: 'rotate(-90deg)' }} />
-              <div className="absolute left-1/2 top-1/2 w-8 h-0.5 bg-gradient-to-r from-cyan to-transparent origin-left" style={{ transform: 'rotate(-135deg)' }} />
-              <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-void border-2 border-cyan glow-cyan-intense" />
-            </div>
-          </div>
-        </div>
+        )}
 
         {/* Bottom Left Info */}
         <div className="absolute bottom-4 left-4 flex flex-col gap-2">
@@ -356,7 +323,9 @@ function Viewport() {
             <div className="size-2 rounded-full bg-green animate-pulse" />
             <span className="text-[11px] font-mono text-text-muted">60 FPS</span>
             <div className="w-px h-3 bg-white/10" />
-            <span className="text-[11px] font-mono text-text-muted">1.2M tris</span>
+            <span className="text-[11px] font-mono text-text-muted">
+              {hasPreview ? `${preview.meshes.length} mesh` : '0 mesh'}
+            </span>
           </div>
         </div>
 
@@ -401,23 +370,42 @@ function Viewport() {
 // ═══════════════════════════════════════════════════════════════
 // CHAT PANEL COMPONENT
 // ═══════════════════════════════════════════════════════════════
-function ChatPanel() {
-  const [message, setMessage] = useState('');
+interface Message {
+  type: 'user' | 'system';
+  content: string;
+  kclCode?: string;
+  time: string;
+}
 
-  const messages = [
-    {
-      type: 'user',
-      content: 'Generate a modern ergonomic office chair with curved armrests',
-      image: 'https://lh3.googleusercontent.com/aida-public/AB6AXuDXdwBHXuTiymdvpijQjUmtMDhctpap0rmUaXpclFnjE_4d_7u0SEVPwm4x11qRpV2GG9B6d9ol80QOgpB6jdFoxXdjp254nOu71SUAxo_8bhuCI1LxXC0PP6gGxrhMykxrqkvaGBTd84BMWO4LWrLzhezM-MQim9eFcH58RaT16x96N0GJbmiPXbwaMtDaZoMuLlpNrg7vOgS7xmkCvOQvjbgRTIUIQYIVv_Z5wOsIPMMVJfQvUt1LSNzv6rxInwtcq96OCx07xH5G',
-      time: '2 min ago',
-    },
-    {
-      type: 'ai',
-      content: 'Analyzing your sketch and generating 3D geometry...',
-      status: 'generating',
-      progress: 78,
-    },
-  ];
+interface ChatPanelProps {
+  onSubmitCode: (code: string) => void;
+  kclCode: string;
+}
+
+function ChatPanel({ onSubmitCode, kclCode }: ChatPanelProps) {
+  const [message, setMessage] = useState('');
+  const [messages, setMessages] = useState<Message[]>([]);
+
+  const handleSubmit = () => {
+    if (message.trim()) {
+      const newMessage: Message = {
+        type: 'user',
+        content: message.trim(),
+        kclCode: message.trim(),
+        time: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
+      };
+      setMessages(prev => [...prev, newMessage]);
+      onSubmitCode(message.trim());
+      setMessage('');
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      e.preventDefault();
+      handleSubmit();
+    }
+  };
 
   return (
     <aside className="w-80 flex flex-col bg-surface border-l border-white/5 shrink-0">
@@ -425,10 +413,9 @@ function ChatPanel() {
       <div className="panel-header px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div className="relative">
-            <Icon name="auto_awesome" className="text-lg text-cyan" />
-            <div className="absolute -top-0.5 -right-0.5 size-2 bg-green rounded-full animate-pulse" />
+            <Icon name="code" className="text-lg text-cyan" />
           </div>
-          <span className="text-sm font-semibold text-text">AI Assistant</span>
+          <span className="text-sm font-semibold text-text">KCL Editor</span>
         </div>
         <div className="flex gap-1">
           <button className="btn-ghost p-1.5 rounded">
@@ -442,66 +429,46 @@ function ChatPanel() {
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
-        {messages.map((msg, i) => (
-          <div
-            key={i}
-            className={`animate-fade-in-up ${msg.type === 'user' ? 'items-end' : 'items-start'} flex flex-col gap-2`}
-            style={{ animationDelay: `${i * 100}ms` }}
-          >
-            {msg.type === 'user' ? (
-              <>
-                <div className="message-user rounded-2xl rounded-tr-md px-4 py-3 max-w-[90%]">
-                  <p className="text-[13px] text-text leading-relaxed">{msg.content}</p>
-                </div>
-                {msg.image && (
-                  <div className="relative w-36 h-36 rounded-xl overflow-hidden border border-white/10 group cursor-pointer">
-                    <img
-                      src={msg.image}
-                      alt="Uploaded sketch"
-                      className="w-full h-full object-cover grayscale opacity-70 group-hover:opacity-100 transition-opacity"
-                    />
-                    <div className="absolute inset-0 bg-gradient-to-t from-void/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end justify-center pb-3">
-                      <Icon name="visibility" className="text-lg text-text" />
-                    </div>
-                  </div>
-                )}
-                <span className="text-[10px] text-text-dim font-mono">{msg.time}</span>
-              </>
-            ) : (
-              <>
-                <div className="flex items-center gap-2 mb-1">
-                  <div className="size-5 rounded-md bg-cyan/10 flex items-center justify-center">
-                    <Icon name="smart_toy" className="text-xs text-cyan" />
-                  </div>
-                  <span className="text-[10px] font-semibold text-text-muted uppercase tracking-wider">FORGE AI</span>
-                </div>
-                <div className="message-ai rounded-2xl rounded-tl-md px-4 py-3 w-full">
-                  <div className="flex items-center gap-2 mb-3">
-                    <div className="size-2 bg-cyan rounded-full animate-pulse-glow" />
-                    <span className="text-[13px] font-medium text-cyan">Generating mesh...</span>
-                  </div>
-                  <p className="text-[13px] text-text-muted leading-relaxed mb-3">{msg.content}</p>
-                  <div className="progress-bar h-1.5 rounded-full">
-                    <div className="progress-fill h-full rounded-full" style={{ width: `${msg.progress}%` }} />
-                  </div>
-                  <div className="flex items-center justify-between mt-2">
-                    <span className="text-[10px] font-mono text-text-dim">Vertices: 12,847</span>
-                    <span className="text-[10px] font-mono text-cyan">{msg.progress}%</span>
-                  </div>
-                </div>
-              </>
-            )}
+        {messages.length === 0 ? (
+          <div className="flex-1 flex flex-col items-center justify-center text-center">
+            <Icon name="terminal" className="text-4xl text-text-dim mb-3" />
+            <p className="text-sm text-text-muted">KCL 코드를 입력하세요</p>
+            <p className="text-xs text-text-dim mt-2">
+              예시: let box1 = box(size: [2, 1, 1], center: [0, 0, 0])
+            </p>
           </div>
-        ))}
+        ) : (
+          messages.map((msg, i) => (
+            <div
+              key={i}
+              className="animate-fade-in-up flex flex-col gap-2"
+              style={{ animationDelay: `${i * 50}ms` }}
+            >
+              <div className="message-user rounded-2xl rounded-tr-md px-4 py-3">
+                <pre className="text-[12px] text-cyan font-mono whitespace-pre-wrap overflow-x-auto">{msg.content}</pre>
+              </div>
+              <span className="text-[10px] text-text-dim font-mono self-end">{msg.time}</span>
+            </div>
+          ))
+        )}
 
-        {/* System notification */}
-        <div className="flex justify-center">
-          <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-green/10 border border-green/20 rounded-full">
-            <Icon name="check_circle" className="text-sm text-green" />
-            <span className="text-[11px] text-green font-medium">Mesh added to scene</span>
+        {kclCode && messages.length > 0 && (
+          <div className="flex justify-center">
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-green/10 border border-green/20 rounded-full">
+              <Icon name="check_circle" className="text-sm text-green" />
+              <span className="text-[11px] text-green font-medium">3D 프리뷰 생성됨</span>
+            </div>
           </div>
-        </div>
+        )}
       </div>
+
+      {/* Current KCL Code Display */}
+      {kclCode && (
+        <div className="px-4 py-2 border-t border-white/5 bg-void/50">
+          <div className="text-[10px] text-text-dim uppercase tracking-wider mb-1">Current Code</div>
+          <pre className="text-[11px] text-cyan font-mono bg-black/30 p-2 rounded overflow-x-auto max-h-20 overflow-y-auto">{kclCode}</pre>
+        </div>
+      )}
 
       {/* Input Area */}
       <div className="p-4 border-t border-white/5 shrink-0">
@@ -509,18 +476,17 @@ function ChatPanel() {
           <textarea
             value={message}
             onChange={(e) => setMessage(e.target.value)}
-            className="command-input w-full rounded-xl px-4 py-3 pr-24 text-[13px] text-text placeholder:text-text-dim resize-none h-24 font-sans"
-            placeholder="Describe a 3D model or drop an image..."
+            onKeyDown={handleKeyDown}
+            className="command-input w-full rounded-xl px-4 py-3 pr-12 text-[13px] text-cyan placeholder:text-text-dim resize-none h-28 font-mono"
+            placeholder="let myBox = box(size: [1, 2, 3], center: [0, 0, 0])"
           />
-          <div className="absolute bottom-3 right-3 flex items-center gap-1">
-            <button className="p-1.5 text-text-muted hover:text-text hover:bg-white/5 rounded-lg transition-colors" title="Attach image">
-              <Icon name="image" className="text-lg" />
-            </button>
-            <button className="p-1.5 text-text-muted hover:text-text hover:bg-white/5 rounded-lg transition-colors" title="Voice input">
-              <Icon name="mic" className="text-lg" />
-            </button>
-            <button className="btn-primary p-2 rounded-lg" aria-label="Send">
-              <Icon name="arrow_upward" className="text-lg" />
+          <div className="absolute bottom-3 right-3">
+            <button 
+              className="btn-primary p-2 rounded-lg" 
+              aria-label="Run"
+              onClick={handleSubmit}
+            >
+              <Icon name="play_arrow" className="text-lg" />
             </button>
           </div>
         </div>
@@ -528,13 +494,13 @@ function ChatPanel() {
         <div className="flex items-center justify-between mt-3">
           <div className="flex items-center gap-2">
             <div className="size-1.5 rounded-full bg-cyan animate-pulse-glow" />
-            <span className="text-[10px] font-mono text-text-dim">forge-vision-3d</span>
+            <span className="text-[10px] font-mono text-text-dim">kcl-runtime</span>
           </div>
           <div className="flex items-center gap-1 text-[10px] text-text-dim">
             <kbd className="px-1.5 py-0.5 bg-white/5 rounded border border-white/10">⌘</kbd>
             <span>+</span>
             <kbd className="px-1.5 py-0.5 bg-white/5 rounded border border-white/10">Enter</kbd>
-            <span className="ml-1">to send</span>
+            <span className="ml-1">to run</span>
           </div>
         </div>
       </div>
@@ -546,14 +512,39 @@ function ChatPanel() {
 // MAIN PAGE
 // ═══════════════════════════════════════════════════════════════
 export default function Page() {
+  const [kclCode, setKclCode] = useState('');
+  const [preview, setPreview] = useState<{ meshes: { id?: string | null; vertices: [number, number, number][]; indices: number[] }[] } | null>(null);
+
+  const handleSubmitCode = useCallback((code: string) => {
+    setKclCode(code);
+    try {
+      const newPreview = kclCodeToPreview(code);
+      setPreview(newPreview);
+    } catch (error) {
+      console.error('KCL parsing error:', error);
+      setPreview(null);
+    }
+  }, []);
+
+  // URL 파라미터로 초기 코드 로드 (테스트용)
+  React.useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const code = params.get('code');
+      if (code) {
+        handleSubmitCode(decodeURIComponent(code));
+      }
+    }
+  }, [handleSubmitCode]);
+
   return (
     <>
       <Header />
       <div className="flex flex-1 overflow-hidden min-h-0">
         <SidebarNav />
         <FileTree />
-        <Viewport />
-        <ChatPanel />
+        <Viewport preview={preview} />
+        <ChatPanel onSubmitCode={handleSubmitCode} kclCode={kclCode} />
       </div>
     </>
   );
