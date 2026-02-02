@@ -624,7 +624,9 @@ export function buildArtifactGraphFromGeometry(spec: GeometrySpec): ArtifactGrap
           sh.openFaces || []
         );
         
-        sourceNode.geometry = { vertices: result.vertices, indices: result.indices };
+        if (result.vertices.length > 0 && result.indices.length > 0) {
+          sourceNode.geometry = { vertices: result.vertices, indices: result.indices };
+        }
       }
     } catch (e) {
       console.error('Shell operation failed:', e instanceof Error ? e.message : String(e));
