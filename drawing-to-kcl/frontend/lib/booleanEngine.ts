@@ -72,6 +72,14 @@ export function toBufferGeometry(
     geometry.computeVertexNormals();
   }
   
+  // Add dummy UV coordinates (required by three-bvh-csg)
+  const uvs = new Float32Array(vertices.length * 2);
+  for (let i = 0; i < vertices.length; i++) {
+    uvs[i * 2] = 0;
+    uvs[i * 2 + 1] = 0;
+  }
+  geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  
   return geometry;
 }
 

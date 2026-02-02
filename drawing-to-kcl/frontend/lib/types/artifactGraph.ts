@@ -4,6 +4,7 @@
 
 import type { GeometrySpec, BoxSpec, CylinderSpec, SphereSpec, ConeSpec, ExtrudeSpec, FilletSpec } from '@/lib/types/geometrySpec';
 import { filletBoxEdge, filletAllBoxEdges, getBoxEdges, type EdgeInfo } from '@/lib/filletEngine';
+import { union, subtract, intersect, type BooleanOperation } from '@/lib/booleanEngine';
 
 export interface ArtifactGraph {
   artifacts: string[];
@@ -479,6 +480,57 @@ export function buildArtifactGraphFromGeometry(spec: GeometrySpec): ArtifactGrap
         const { vertices, indices } = filletBox(boxSpec, fillet.radius, segments);
         sourceNode.geometry = { vertices, indices };
       }
+    }
+  }
+  
+  // Process Boolean operations
+  for (const bool of spec.booleans || []) {
+    const nodeA = nodes[bool.sourceAId];
+    const nodeB = nodes[bool.sourceBId];
+    
+    if (!nodeA?.geometry || !nodeB?.geometry) continue;
+    
+    try {
+      // Select the appropriate boolean function
+      let booleanFn: typeof union;
+      switch (bool.operation) {
+        case 'union':
+          booleanFn = union;
+          break;
+        case 'subtract':
+          booleanFn = subtract;
+          break;
+        case 'intersect':
+          booleanFn = intersect;
+          break;
+        default:
+          continue;
+      }
+      
+      const result = booleanFn(
+        nodeA.geometry.vertices,
+        nodeA.geometry.indices,
+        [], // normals (will be computed)
+        nodeB.geometry.vertices,
+        nodeB.geometry.indices,
+        []  // normals (will be computed)
+      );
+      
+      // Add result as new node
+      artifacts.push(bool.id);
+      nodes[bool.id] = {
+        id: bool.id,
+        type: 'solid',
+        geometry: { vertices: result.vertices, indices: result.indices },
+      };
+      
+      // Remove source artifacts from render list (they're now combined)
+      const aIdx = artifacts.indexOf(bool.sourceAId);
+      if (aIdx !== -1) artifacts.splice(aIdx, 1);
+      const bIdx = artifacts.indexOf(bool.sourceBId);
+      if (bIdx !== -1) artifacts.splice(bIdx, 1);
+    } catch (e) {
+      console.error('Boolean operation failed:', e instanceof Error ? e.message : String(e));
     }
   }
   

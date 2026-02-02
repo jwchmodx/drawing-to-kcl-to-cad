@@ -216,11 +216,12 @@ export const KclPreview3D: React.FC<KclPreview3DProps> = ({
       containerRef.current.innerHTML = '';
       containerRef.current.appendChild(renderer.domElement);
 
-      // Lighting
-      const light = new THREE.DirectionalLight(0xffffff, 1);
-      light.position.set(5, 10, 5);
+      // Lighting - fully bright, no shadows
+      const light = new THREE.DirectionalLight(0xffffff, 0.4);
+      light.position.set(5, 8, 7);
       scene.add(light);
-      scene.add(new THREE.AmbientLight(0x404040, 0.5));
+      // Very strong ambient - almost flat lighting
+      scene.add(new THREE.AmbientLight(0xffffff, 1.0));
       
       // Add grid helper
       const gridHelper = new THREE.GridHelper(10, 10, 0x00d4ff, 0x1c232d);
@@ -240,11 +241,8 @@ export const KclPreview3D: React.FC<KclPreview3DProps> = ({
         geometry.computeVertexNormals();
         geometries.push(geometry);
 
-        const material = new THREE.MeshStandardMaterial({ 
-          color: 0xff8800, 
-          flatShading: false,
-          metalness: 0.1,
-          roughness: 0.7,
+        const material = new THREE.MeshBasicMaterial({ 
+          color: 0xffaa44,  // Brighter orange, no lighting effects
         });
         materials.push(material);
         
@@ -253,6 +251,13 @@ export const KclPreview3D: React.FC<KclPreview3DProps> = ({
         mesh.userData.meshIndex = index;
         scene.add(mesh);
         threeMeshes.push(mesh);
+        
+        // Add edge lines for clear boundaries - darker and thicker
+        const edgeGeometry = new THREE.EdgesGeometry(geometry, 15); // lower threshold = more edges
+        const edgeMaterial = new THREE.LineBasicMaterial({ color: 0x000000, linewidth: 2 });
+        const edges = new THREE.LineSegments(edgeGeometry, edgeMaterial);
+        edges.name = `edges_${index}`;
+        scene.add(edges);
         
         // Add wireframe for edit mode
         if (editMode) {
