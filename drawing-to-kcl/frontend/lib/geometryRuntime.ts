@@ -43,9 +43,10 @@ const CONE_REG =
 const EXTRUDE_REG =
   /let\s+(\w+)\s*=\s*extrude\s*\(\s*(\w+)\.face\.(top|bottom|left|right|front|back)\s*,\s*distance\s*:\s*([-\d.e]+)\s*\)/gi;
 
-// Fillet: let name = fillet(source.edge[n], radius: n)
+// Fillet: let name = fillet(source.edge[n], radius: n, segments: n?)
+// segments is optional
 const FILLET_REG =
-  /let\s+(\w+)\s*=\s*fillet\s*\(\s*(\w+)\.edge\[(\d+)\]\s*,\s*radius\s*:\s*([-\d.e]+)\s*\)/gi;
+  /let\s+(\w+)\s*=\s*fillet\s*\(\s*(\w+)\.edge\[(\d+)\]\s*,\s*radius\s*:\s*([-\d.e]+)(?:\s*,\s*segments\s*:\s*(\d+))?\s*\)/gi;
 
 // Geom comment for inline definitions
 const GEOM_COMMENT = /#\s*geom:\s*(.+)/gi;
@@ -129,16 +130,20 @@ function extractFilletFromLine(line: string): FilletSpec | null {
   FILLET_REG.lastIndex = 0;
   const m = FILLET_REG.exec(line);
   if (!m) return null;
-  const [, name, source, edgeIdx, r] = m;
+  const [, name, source, edgeIdx, r, seg] = m;
   if (!name || !source) return null;
   const edgeIndex = parseInt(edgeIdx!, 10);
   const radius = parseNum(r!);
   if (Number.isNaN(edgeIndex) || Number.isNaN(radius)) return null;
+  
+  const segments = seg ? parseInt(seg, 10) : undefined;
+  
   return { 
     id: `solid:${name}`, 
     sourceId: `solid:${source}`, 
     edgeIndex, 
-    radius 
+    radius,
+    segments: Number.isFinite(segments) ? segments : undefined
   };
 }
 

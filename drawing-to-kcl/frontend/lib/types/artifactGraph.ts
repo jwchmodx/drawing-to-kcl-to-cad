@@ -2,7 +2,8 @@
  * Artifact graph types and helpers: parse, extractMeshes, buildArtifactGraphFromGeometry.
  */
 
-import type { GeometrySpec, BoxSpec, CylinderSpec, SphereSpec, ConeSpec, ExtrudeSpec } from '@/lib/types/geometrySpec';
+import type { GeometrySpec, BoxSpec, CylinderSpec, SphereSpec, ConeSpec, ExtrudeSpec, FilletSpec } from '@/lib/types/geometrySpec';
+import { filletBoxEdge, filletAllBoxEdges, getBoxEdges, type EdgeInfo } from '@/lib/filletEngine';
 
 export interface ArtifactGraph {
   artifacts: string[];
@@ -304,89 +305,39 @@ export function extrudeBox(
 }
 
 // ═══════════════════════════════════════════════════════════════
-// FILLET GEOMETRY (simplified - rounds box corners)
+// FILLET GEOMETRY (using filletEngine)
 // ═══════════════════════════════════════════════════════════════
+
+/**
+ * Apply fillet to a specific edge of a box
+ */
+export function filletBoxSingleEdge(
+  boxSpec: BoxSpec,
+  edgeIndex: number,
+  radius: number,
+  segments: number = 8
+): { vertices: number[][]; indices: number[] } {
+  const result = filletBoxEdge(boxSpec.size, boxSpec.center, edgeIndex, radius, segments);
+  return { vertices: result.vertices, indices: result.indices };
+}
+
+/**
+ * Apply fillet to all edges of a box (rounded box)
+ */
 export function filletBox(
   boxSpec: BoxSpec,
   radius: number,
   segments: number = 8
 ): { vertices: number[][]; indices: number[] } {
-  // For a full fillet implementation, we would need to:
-  // 1. Identify the edges to fillet
-  // 2. Create curved geometry along those edges
-  // 3. Rebuild the faces
-  
-  // Simplified: Create a rounded box by generating smooth corners
-  const [sx, sy, sz] = boxSpec.size;
-  const [cx, cy, cz] = boxSpec.center;
-  const hx = sx / 2;
-  const hy = sy / 2;
-  const hz = sz / 2;
-  
-  // Clamp radius to half the smallest dimension
-  const maxRadius = Math.min(hx, hy, hz);
-  const r = Math.min(radius, maxRadius);
-  
-  const vertices: number[][] = [];
-  const indices: number[] = [];
-  
-  // Generate rounded corner vertices
-  // 8 corners, each with a quarter-sphere section
-  const corners: [number, number, number, number, number, number][] = [
-    [cx - hx + r, cy - hy + r, cz - hz + r, -1, -1, -1],
-    [cx + hx - r, cy - hy + r, cz - hz + r, 1, -1, -1],
-    [cx + hx - r, cy + hy - r, cz - hz + r, 1, 1, -1],
-    [cx - hx + r, cy + hy - r, cz - hz + r, -1, 1, -1],
-    [cx - hx + r, cy - hy + r, cz + hz - r, -1, -1, 1],
-    [cx + hx - r, cy - hy + r, cz + hz - r, 1, -1, 1],
-    [cx + hx - r, cy + hy - r, cz + hz - r, 1, 1, 1],
-    [cx - hx + r, cy + hy - r, cz + hz - r, -1, 1, 1],
-  ];
-  
-  // For simplicity, we'll generate a basic rounded box
-  // using 8 corner sphere sections
-  for (const [px, py, pz, dx, dy, dz] of corners) {
-    const startIdx = vertices.length;
-    
-    // Generate corner vertices
-    for (let i = 0; i <= segments; i++) {
-      const theta = (i / segments) * Math.PI / 2;
-      for (let j = 0; j <= segments; j++) {
-        const phi = (j / segments) * Math.PI / 2;
-        
-        const x = px + dx * r * Math.sin(theta) * Math.cos(phi);
-        const y = py + dy * r * Math.cos(theta);
-        const z = pz + dz * r * Math.sin(theta) * Math.sin(phi);
-        
-        vertices.push([x, y, z]);
-      }
-    }
-    
-    // Generate corner indices
-    for (let i = 0; i < segments; i++) {
-      for (let j = 0; j < segments; j++) {
-        const a = startIdx + i * (segments + 1) + j;
-        const b = a + 1;
-        const c = a + segments + 1;
-        const d = c + 1;
-        
-        if (dx * dy * dz > 0) {
-          indices.push(a, c, b);
-          indices.push(b, c, d);
-        } else {
-          indices.push(a, b, c);
-          indices.push(b, d, c);
-        }
-      }
-    }
-  }
-  
-  // For a complete implementation, we would also need to:
-  // - Generate edge cylinders
-  // - Generate face quads
-  // This is a simplified version for demonstration
-  
-  return { vertices, indices };
+  const result = filletAllBoxEdges(boxSpec.size, boxSpec.center, radius, segments);
+  return { vertices: result.vertices, indices: result.indices };
+}
+
+/**
+ * Get edge information for a box
+ */
+export function getBoxEdgeInfo(boxSpec: BoxSpec): EdgeInfo[] {
+  return getBoxEdges(boxSpec.size, boxSpec.center);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -511,8 +462,23 @@ export function buildArtifactGraphFromGeometry(spec: GeometrySpec): ArtifactGrap
     
     if (sourceNode.type === 'solid' && 'size' in sourceNode.spec) {
       const boxSpec = sourceNode.spec as BoxSpec;
-      const { vertices, indices } = filletBox(boxSpec, fillet.radius, fillet.segments);
-      sourceNode.geometry = { vertices, indices };
+      const segments = fillet.segments ?? 8;
+      
+      // Check if a specific edge is specified
+      if (fillet.edgeIndex !== undefined && fillet.edgeIndex >= 0) {
+        // Single edge fillet
+        const { vertices, indices } = filletBoxSingleEdge(
+          boxSpec, 
+          fillet.edgeIndex, 
+          fillet.radius, 
+          segments
+        );
+        sourceNode.geometry = { vertices, indices };
+      } else {
+        // All edges fillet (rounded box)
+        const { vertices, indices } = filletBox(boxSpec, fillet.radius, segments);
+        sourceNode.geometry = { vertices, indices };
+      }
     }
   }
   
