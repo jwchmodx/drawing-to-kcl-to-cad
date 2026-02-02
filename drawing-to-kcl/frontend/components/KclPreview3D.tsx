@@ -1,10 +1,15 @@
-import React, { useEffect, useRef, useCallback } from 'react';
+import React, { useEffect, useRef, useCallback, useState, forwardRef, useImperativeHandle } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 import {
   computeBoundingBox,
   computeCameraForBounds,
+  BoundingBox,
 } from '../lib/threeCameraUtils';
+import { SectionEngine, PlaneType, SectionEngineState, createDefaultSectionState } from '../lib/sectionEngine';
+import { SectionControls } from './SectionControls';
+import { getMaterialEngine, MaterialEngine } from '../lib/materialEngine';
+import { MaterialProperties } from '../lib/materialPresets';
 
 type MeshPreview = {
   id?: string | null;
@@ -23,11 +28,22 @@ export interface FaceSelection {
   center: [number, number, number];
 }
 
+export type ViewType = 'front' | 'back' | 'left' | 'right' | 'top' | 'bottom' | 'perspective';
+
+export interface KclPreview3DRef {
+  setView: (view: ViewType) => void;
+  focusOnSelection: () => void;
+  resetCamera: () => void;
+  getCurrentView: () => ViewType;
+}
+
 export interface KclPreview3DProps {
   preview: unknown;
   onFaceSelect?: (selection: FaceSelection | null) => void;
   selectedFace?: FaceSelection | null;
   editMode?: boolean;
+  showSectionControls?: boolean;
+  onViewChange?: (view: ViewType) => void;
 }
 
 function getAllRenderableMeshes(preview: unknown): MeshPreview[] {
@@ -41,13 +57,17 @@ function getAllRenderableMeshes(preview: unknown): MeshPreview[] {
 /**
  * Three.js-based preview renderer with face selection support.
  */
-export const KclPreview3D: React.FC<KclPreview3DProps> = ({ 
+export const KclPreview3D = forwardRef<KclPreview3DRef, KclPreview3DProps>(({ 
   preview, 
   onFaceSelect,
   selectedFace,
-  editMode = false 
-}) => {
+  editMode = false,
+  showSectionControls = true,
+  onViewChange,
+}, ref) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const boundsRef = useRef<BoundingBox | null>(null);
+  const currentViewRef = useRef<ViewType>('perspective');
   const sceneRef = useRef<{
     scene: THREE.Scene;
     camera: THREE.PerspectiveCamera;
@@ -57,7 +77,129 @@ export const KclPreview3D: React.FC<KclPreview3DProps> = ({
     highlightMesh: THREE.Mesh | null;
     raycaster: THREE.Raycaster;
     mouse: THREE.Vector2;
+    sectionEngine: SectionEngine | null;
   } | null>(null);
+
+  // Camera view functions
+  const setView = useCallback((view: ViewType) => {
+    if (!sceneRef.current) return;
+    
+    const { camera, controls } = sceneRef.current;
+    const bounds = boundsRef.current;
+    const center = bounds?.center || [0, 0, 0];
+    const distance = bounds ? Math.max(bounds.radius * 2.5, 3) : 5;
+    
+    let position: [number, number, number];
+    
+    switch (view) {
+      case 'front':
+        position = [center[0], center[1], center[2] + distance];
+        break;
+      case 'back':
+        position = [center[0], center[1], center[2] - distance];
+        break;
+      case 'left':
+        position = [center[0] - distance, center[1], center[2]];
+        break;
+      case 'right':
+        position = [center[0] + distance, center[1], center[2]];
+        break;
+      case 'top':
+        position = [center[0], center[1] + distance, center[2]];
+        break;
+      case 'bottom':
+        position = [center[0], center[1] - distance, center[2]];
+        break;
+      case 'perspective':
+      default:
+        position = [
+          center[0] + distance * 0.5,
+          center[1] + distance * 0.5,
+          center[2] + distance * 0.5,
+        ];
+        break;
+    }
+    
+    camera.position.set(...position);
+    controls.target.set(center[0], center[1], center[2]);
+    controls.update();
+    
+    currentViewRef.current = view;
+    onViewChange?.(view);
+  }, [onViewChange]);
+
+  const focusOnSelection = useCallback(() => {
+    if (!sceneRef.current || !selectedFace) return;
+    
+    const { camera, controls } = sceneRef.current;
+    const center = selectedFace.center;
+    const distance = 3;
+    
+    // Position camera along the face normal
+    const normal = selectedFace.normal;
+    camera.position.set(
+      center[0] + normal[0] * distance,
+      center[1] + normal[1] * distance,
+      center[2] + normal[2] * distance
+    );
+    controls.target.set(center[0], center[1], center[2]);
+    controls.update();
+  }, [selectedFace]);
+
+  const resetCamera = useCallback(() => {
+    setView('perspective');
+  }, [setView]);
+
+  const getCurrentView = useCallback(() => {
+    return currentViewRef.current;
+  }, []);
+
+  // Expose methods via ref
+  useImperativeHandle(ref, () => ({
+    setView,
+    focusOnSelection,
+    resetCamera,
+    getCurrentView,
+  }), [setView, focusOnSelection, resetCamera, getCurrentView]);
+
+  // Section state management
+  const [sectionState, setSectionState] = useState<SectionEngineState>(createDefaultSectionState());
+
+  // Section control handlers
+  const handleToggleSectionEnabled = useCallback((enabled: boolean) => {
+    if (sceneRef.current?.sectionEngine) {
+      sceneRef.current.sectionEngine.setEnabled(enabled);
+      setSectionState(sceneRef.current.sectionEngine.getState());
+    }
+  }, []);
+
+  const handleTogglePlane = useCallback((type: PlaneType, enabled: boolean) => {
+    if (sceneRef.current?.sectionEngine) {
+      sceneRef.current.sectionEngine.updatePlane(type, { enabled });
+      setSectionState(sceneRef.current.sectionEngine.getState());
+    }
+  }, []);
+
+  const handlePositionChange = useCallback((type: PlaneType, position: number) => {
+    if (sceneRef.current?.sectionEngine) {
+      sceneRef.current.sectionEngine.updatePlane(type, { position });
+      setSectionState(sceneRef.current.sectionEngine.getState());
+    }
+  }, []);
+
+  const handleFlipPlane = useCallback((type: PlaneType, flip: boolean) => {
+    if (sceneRef.current?.sectionEngine) {
+      sceneRef.current.sectionEngine.updatePlane(type, { flip });
+      setSectionState(sceneRef.current.sectionEngine.getState());
+    }
+  }, []);
+
+  const getPlaneRange = useCallback((type: PlaneType) => {
+    if (sceneRef.current?.sectionEngine) {
+      return sceneRef.current.sectionEngine.getPlaneRange(type);
+    }
+    return { min: -10, max: 10 };
+  }, []);
 
   // Handle mouse click for face selection
   const handleClick = useCallback((event: MouseEvent) => {
@@ -278,6 +420,18 @@ export const KclPreview3D: React.FC<KclPreview3DProps> = ({
       controls = new OrbitControls(camera, renderer.domElement);
       controls.enableDamping = false;
 
+      // Initialize section engine
+      const sectionEngine = new SectionEngine(renderer, scene);
+      
+      // Calculate bounds for section planes
+      if (bounds) {
+        const box = new THREE.Box3(
+          new THREE.Vector3(bounds.min[0], bounds.min[1], bounds.min[2]),
+          new THREE.Vector3(bounds.max[0], bounds.max[1], bounds.max[2])
+        );
+        sectionEngine.setBounds(box);
+      }
+
       // Store references for raycasting
       sceneRef.current = {
         scene,
@@ -288,7 +442,11 @@ export const KclPreview3D: React.FC<KclPreview3DProps> = ({
         highlightMesh: null,
         raycaster: new THREE.Raycaster(),
         mouse: new THREE.Vector2(),
+        sectionEngine,
       };
+      
+      // Update section state
+      setSectionState(sectionEngine.getState());
 
       // Add click listener for face selection
       if (editMode) {
@@ -321,6 +479,9 @@ export const KclPreview3D: React.FC<KclPreview3DProps> = ({
       if (controls) {
         controls.dispose();
       }
+      if (sceneRef.current?.sectionEngine) {
+        sceneRef.current.sectionEngine.dispose();
+      }
       if (renderer) {
         renderer.dispose();
       }
@@ -334,10 +495,26 @@ export const KclPreview3D: React.FC<KclPreview3DProps> = ({
   }, [preview, editMode, handleClick]);
 
   return (
-    <div 
-      ref={containerRef} 
-      className="w-full h-full min-h-0" 
-      data-testid="kcl-preview-3d"
-    />
+    <div className="relative w-full h-full min-h-0">
+      <div 
+        ref={containerRef} 
+        className="w-full h-full" 
+        data-testid="kcl-preview-3d"
+      />
+      
+      {/* Section Controls UI */}
+      {showSectionControls && (
+        <div className="absolute top-3 right-3 z-10">
+          <SectionControls
+            state={sectionState}
+            onToggleEnabled={handleToggleSectionEnabled}
+            onTogglePlane={handleTogglePlane}
+            onPositionChange={handlePositionChange}
+            onFlipPlane={handleFlipPlane}
+            getPlaneRange={getPlaneRange}
+          />
+        </div>
+      )}
+    </div>
   );
 };

@@ -5,6 +5,20 @@ import { KclPreview3D, FaceSelection } from '@/components/KclPreview3D';
 import { buildGeometrySpecFromKcl, exportToSTL, exportToSTLBinary, exportToSTEP } from '@/lib/geometryRuntime';
 import { buildArtifactGraphFromGeometry, extractMeshes } from '@/lib/types/artifactGraph';
 import { importSTLFile, meshToApproximateKCL, normalizeMesh } from '@/lib/stlImporter';
+import { SketchCanvas } from '@/components/SketchCanvas';
+import { SketchToolbar, SketchInfoPanel, SketchFinishDialog } from '@/components/SketchToolbar';
+import { 
+  SketchState, 
+  SketchTool, 
+  SketchPlane,
+  Point2D,
+  createInitialSketchState,
+  getDefaultPlaneConfig,
+  generateSketchProfileKCL,
+  generateExtrudeFromSketchKCL,
+} from '@/lib/sketchEngine';
+import { useHistory, detectChangeLabel } from '@/hooks/useHistory';
+import { HistoryPanel } from '@/components/HistoryPanel';
 
 // KCL 코드를 프리뷰 데이터로 변환
 function kclCodeToPreview(kclCode: string) {
@@ -945,6 +959,32 @@ export default function Page() {
   const previewDataRef = useRef<ReturnType<typeof kclCodeToPreview> | null>(null);
   const [importedFiles, setImportedFiles] = useState<ImportedFile[]>([]);
   const [selectedImportedFile, setSelectedImportedFile] = useState<ImportedFile | null>(null);
+  const [historyPanelCollapsed, setHistoryPanelCollapsed] = useState(false);
+  const prevKclCodeRef = useRef('');
+
+  // History hook - handles undo/redo state and keyboard shortcuts
+  const history = useHistory({
+    onCodeChange: useCallback((code: string) => {
+      // When history changes (undo/redo), update the preview
+      setKclCode(code);
+      try {
+        const newPreview = kclCodeToPreview(code);
+        previewDataRef.current = newPreview;
+        setPreview({ meshes: newPreview.meshes });
+      } catch (error) {
+        console.error('KCL parsing error on history change:', error);
+        setPreview(null);
+      }
+    }, []),
+  });
+
+  // Helper to update KCL code with history tracking
+  const updateKclCodeWithHistory = useCallback((newCode: string, label?: string) => {
+    const changeLabel = label || detectChangeLabel(prevKclCodeRef.current, newCode);
+    prevKclCodeRef.current = newCode;
+    setKclCode(newCode);
+    history.pushState(newCode, changeLabel);
+  }, [history]);
 
   // Handle file import (STL or KCL)
   const handleFileImport = useCallback(async (file: File) => {
@@ -975,8 +1015,8 @@ export default function Page() {
           }]
         });
         
-        // Also set approximate KCL code
-        setKclCode(kclApprox);
+        // Also set approximate KCL code with history
+        updateKclCodeWithHistory(kclApprox, `Import ${file.name}`);
         
       } else if (file.name.endsWith('.kcl')) {
         const text = await file.text();
@@ -988,7 +1028,7 @@ export default function Page() {
         };
         
         setImportedFiles(prev => [...prev, importedFile]);
-        setKclCode(text);
+        updateKclCodeWithHistory(text, `Import ${file.name}`);
         
         // Parse and preview
         try {
@@ -1003,7 +1043,7 @@ export default function Page() {
       console.error('File import error:', error);
       alert(`Failed to import ${file.name}: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
-  }, []);
+  }, [updateKclCodeWithHistory]);
 
   // Handle selecting an imported file
   const handleFileSelect = useCallback((file: ImportedFile) => {
@@ -1033,7 +1073,7 @@ export default function Page() {
   }, []);
 
   const handleSubmitCode = useCallback((code: string) => {
-    setKclCode(code);
+    updateKclCodeWithHistory(code, 'AI Generated Code');
     try {
       const newPreview = kclCodeToPreview(code);
       previewDataRef.current = newPreview;
@@ -1042,7 +1082,7 @@ export default function Page() {
       console.error('KCL parsing error:', error);
       setPreview(null);
     }
-  }, []);
+  }, [updateKclCodeWithHistory]);
 
   const handleApplyOperation = useCallback((operation: string, params: Record<string, number | string>) => {
     if (operation === 'extrude') {
