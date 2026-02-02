@@ -35,7 +35,10 @@ import type {
   MirrorSpec,
   ScaleSpec,
   RotateSpec,
-  TranslateSpec
+  TranslateSpec,
+  SweepSpec,
+  LoftSpec,
+  DraftSpec
 } from '@/lib/types/geometrySpec';
 
 // ═══════════════════════════════════════════════════════════════
@@ -122,6 +125,18 @@ const ROTATE_REG =
 // Translate: let name = translate(source, offset: [x,y,z])
 const TRANSLATE_REG =
   /let\s+(\w+)\s*=\s*translate\s*\(\s*(\w+)\s*,\s*offset\s*:\s*\[\s*([-\d.e]+)\s*,\s*([-\d.e]+)\s*,\s*([-\d.e]+)\s*\]\s*\)/gi;
+
+// Sweep: let name = sweep(profile: circle|rect, size: n|[w,h], path: [[x,y,z], ...])
+const SWEEP_REG =
+  /let\s+(\w+)\s*=\s*sweep\s*\(\s*profile\s*:\s*['"]?(circle|rect)['"]?\s*,\s*size\s*:\s*([-\d.e]+|\[\s*[-\d.e]+\s*,\s*[-\d.e]+\s*\])\s*,\s*path\s*:\s*(\[\s*\[[\d\s,.\-e\[\]]+\]\s*\])\s*\)/gi;
+
+// Loft: let name = loft(profiles: [...])
+const LOFT_REG =
+  /let\s+(\w+)\s*=\s*loft\s*\(\s*profiles\s*:\s*(\[[\s\S]*?\])\s*\)/gi;
+
+// Draft: let name = draft(source, angle: n)
+const DRAFT_REG =
+  /let\s+(\w+)\s*=\s*draft\s*\(\s*(\w+)\s*,\s*angle\s*:\s*([-\d.e]+)\s*\)/gi;
 
 // ═══════════════════════════════════════════════════════════════
 // PARSE HELPERS
@@ -494,6 +509,70 @@ function extractTranslateFromLine(line: string): TranslateSpec | null {
   return { id: `solid:${name}`, sourceId: `solid:${source}`, offset };
 }
 
+function extractSweepFromLine(line: string): SweepSpec | null {
+  SWEEP_REG.lastIndex = 0;
+  const m = SWEEP_REG.exec(line);
+  if (!m) return null;
+  const [, name, profile, sizeStr, pathStr] = m;
+  if (!name || !profile || !sizeStr || !pathStr) return null;
+  
+  // Parse size
+  let profileSize: number | [number, number];
+  if (sizeStr.startsWith('[')) {
+    const parts = sizeStr.replace(/[\[\]]/g, '').split(',').map(s => parseNum(s.trim()));
+    if (parts.length !== 2 || parts.some(Number.isNaN)) return null;
+    profileSize = parts as [number, number];
+  } else {
+    profileSize = parseNum(sizeStr);
+    if (Number.isNaN(profileSize)) return null;
+  }
+  
+  // Parse path - array of [x,y,z] points
+  try {
+    const path = JSON.parse(pathStr) as [number, number, number][];
+    if (!Array.isArray(path) || path.length < 2) return null;
+    
+    return {
+      id: `solid:${name}`,
+      profile: profile as 'circle' | 'rect',
+      profileSize,
+      path,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function extractLoftFromLine(line: string): LoftSpec | null {
+  LOFT_REG.lastIndex = 0;
+  const m = LOFT_REG.exec(line);
+  if (!m) return null;
+  const [, name, profilesStr] = m;
+  if (!name || !profilesStr) return null;
+  
+  try {
+    const profiles = JSON.parse(profilesStr);
+    if (!Array.isArray(profiles) || profiles.length < 2) return null;
+    
+    return { id: `solid:${name}`, profiles };
+  } catch {
+    return null;
+  }
+}
+
+function extractDraftFromLine(line: string): DraftSpec | null {
+  DRAFT_REG.lastIndex = 0;
+  const m = DRAFT_REG.exec(line);
+  if (!m) return null;
+  const [, name, source, angleStr] = m;
+  if (!name || !source) return null;
+  
+  const angle = parseNum(angleStr!);
+  if (Number.isNaN(angle)) return null;
+  
+  return { id: `solid:${name}`, sourceId: `solid:${source}`, angle };
+}
+
 // ═══════════════════════════════════════════════════════════════
 // MAIN PARSER
 // ═══════════════════════════════════════════════════════════════
@@ -518,6 +597,9 @@ export function buildGeometrySpecFromKcl(kclCode: string): GeometrySpec {
   const scales: ScaleSpec[] = [];
   const rotates: RotateSpec[] = [];
   const translates: TranslateSpec[] = [];
+  const sweeps: SweepSpec[] = [];
+  const lofts: LoftSpec[] = [];
+  const drafts: DraftSpec[] = [];
   const seen = new Set<string>();
 
   const lines = kclCode.split('\n');
@@ -675,6 +757,32 @@ export function buildGeometrySpecFromKcl(kclCode: string): GeometrySpec {
       translates.push(trans);
       continue;
     }
+    
+    // Sweep
+    const swp = extractSweepFromLine(line);
+    if (swp && !seen.has(swp.id)) {
+      seen.add(swp.id);
+      artifacts.push(swp.id);
+      sweeps.push(swp);
+      continue;
+    }
+    
+    // Loft
+    const lft = extractLoftFromLine(line);
+    if (lft && !seen.has(lft.id)) {
+      seen.add(lft.id);
+      artifacts.push(lft.id);
+      lofts.push(lft);
+      continue;
+    }
+    
+    // Draft
+    const dft = extractDraftFromLine(line);
+    if (dft && !seen.has(dft.id)) {
+      seen.add(dft.id);
+      drafts.push(dft);
+      continue;
+    }
   }
 
   // Also check geom comments
@@ -734,7 +842,10 @@ export function buildGeometrySpecFromKcl(kclCode: string): GeometrySpec {
     mirrors,
     scales,
     rotates,
-    translates
+    translates,
+    sweeps,
+    lofts,
+    drafts
   };
 }
 

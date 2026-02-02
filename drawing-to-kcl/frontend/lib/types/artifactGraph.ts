@@ -10,6 +10,9 @@ import { linearPattern, circularPattern } from '@/lib/patternEngine';
 import { shellBoxSimple } from '@/lib/shellBoxSimple';
 import { torus, helix } from '@/lib/advancedPrimitives';
 import { mirror, scale, rotate, translate } from '@/lib/transformEngine';
+import { sweep, pipe, circleProfile, rectProfile, curvePath } from '@/lib/sweepEngine';
+import { loft, loftCircles, circleProfile3D, rectProfile3D } from '@/lib/loftEngine';
+import { draftBox, draftCylinder, draftMesh } from '@/lib/draftEngine';
 
 export interface ArtifactGraph {
   artifacts: string[];
@@ -542,8 +545,11 @@ export function buildArtifactGraphFromGeometry(spec: GeometrySpec): ArtifactGrap
   // Process Revolve operations
   for (const rev of spec.revolves || []) {
     try {
+      // Convert [number, number][] to Vec2[]
+      const profileVec2 = rev.profile.map(p => ({ x: p[0], y: p[1] }));
+      
       const result = revolve(
-        rev.profile,
+        profileVec2,
         rev.axis,
         rev.angle,
         rev.segments || 32,
@@ -755,6 +761,82 @@ export function buildArtifactGraphFromGeometry(spec: GeometrySpec): ArtifactGrap
       sourceNode.geometry = { vertices: result.vertices, indices: result.indices };
     } catch (e) {
       console.error('Translate failed:', e instanceof Error ? e.message : String(e));
+    }
+  }
+  
+  // Process Sweep operations
+  for (const swp of spec.sweeps || []) {
+    try {
+      let profile: [number, number][];
+      if (swp.profile === 'circle') {
+        const radius = typeof swp.profileSize === 'number' ? swp.profileSize : swp.profileSize[0];
+        profile = circleProfile(radius, 16);
+      } else {
+        const [w, h] = typeof swp.profileSize === 'number' 
+          ? [swp.profileSize, swp.profileSize] 
+          : swp.profileSize;
+        profile = rectProfile(w, h);
+      }
+      
+      const result = sweep(profile, swp.path, swp.closed ?? true);
+      
+      artifacts.push(swp.id);
+      nodes[swp.id] = {
+        id: swp.id,
+        type: 'solid',
+        geometry: { vertices: result.vertices, indices: result.indices },
+      };
+    } catch (e) {
+      console.error('Sweep failed:', e instanceof Error ? e.message : String(e));
+    }
+  }
+  
+  // Process Loft operations
+  for (const lft of spec.lofts || []) {
+    try {
+      const profiles: [number, number, number][][] = [];
+      
+      for (const p of lft.profiles) {
+        const dir: [number, number, number] = [0, 1, 0]; // Default up direction
+        if (p.shape === 'circle') {
+          const radius = typeof p.size === 'number' ? p.size : p.size[0];
+          profiles.push(circleProfile3D(p.center, radius, dir, 16));
+        } else {
+          const [w, h] = typeof p.size === 'number' ? [p.size, p.size] : p.size;
+          profiles.push(rectProfile3D(p.center, w, h, dir));
+        }
+      }
+      
+      const result = loft(profiles, true, lft.interpolationSteps || 2);
+      
+      artifacts.push(lft.id);
+      nodes[lft.id] = {
+        id: lft.id,
+        type: 'solid',
+        geometry: { vertices: result.vertices, indices: result.indices },
+      };
+    } catch (e) {
+      console.error('Loft failed:', e instanceof Error ? e.message : String(e));
+    }
+  }
+  
+  // Process Draft operations
+  for (const dft of spec.drafts || []) {
+    const sourceNode = nodes[dft.sourceId];
+    if (!sourceNode?.geometry) continue;
+    
+    try {
+      const result = draftMesh(
+        sourceNode.geometry.vertices,
+        sourceNode.geometry.indices,
+        dft.angle,
+        [0, 0, 0],
+        dft.direction || [0, 1, 0]
+      );
+      
+      sourceNode.geometry = { vertices: result.vertices, indices: result.indices };
+    } catch (e) {
+      console.error('Draft failed:', e instanceof Error ? e.message : String(e));
     }
   }
   

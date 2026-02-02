@@ -153,6 +153,31 @@ export interface TranslateSpec {
   offset: [number, number, number];
 }
 
+export interface SweepSpec {
+  id: string;
+  profile: 'circle' | 'rect';
+  profileSize: number | [number, number]; // radius for circle, [width, height] for rect
+  path: [number, number, number][]; // 3D path points
+  closed?: boolean;
+}
+
+export interface LoftSpec {
+  id: string;
+  profiles: {
+    center: [number, number, number];
+    shape: 'circle' | 'rect';
+    size: number | [number, number];
+  }[];
+  interpolationSteps?: number;
+}
+
+export interface DraftSpec {
+  id: string;
+  sourceId: string;
+  angle: number; // degrees
+  direction?: [number, number, number];
+}
+
 export interface GeometrySpec {
   artifacts: string[];
   boxes: BoxSpec[];
@@ -173,6 +198,9 @@ export interface GeometrySpec {
   scales: ScaleSpec[];
   rotates: RotateSpec[];
   translates: TranslateSpec[];
+  sweeps: SweepSpec[];
+  lofts: LoftSpec[];
+  drafts: DraftSpec[];
 }
 
 // Face reference for extrude operations

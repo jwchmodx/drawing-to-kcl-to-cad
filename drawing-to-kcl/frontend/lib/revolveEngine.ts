@@ -153,9 +153,9 @@ export function revolve(
       const p = profile[j];
       
       // Convert 2D profile to 3D point
-      // p[0] = radius from axis, p[1] = height along axis
-      const radius = p[0];
-      const height = p[1];
+      // p.x = radius from axis, p.y = height along axis
+      const radius = p.x;
+      const height = p.y;
       
       // Start position: radius in radial direction, height along axis
       const basePoint = add(
