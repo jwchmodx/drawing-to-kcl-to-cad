@@ -5,6 +5,9 @@
 import type { GeometrySpec, BoxSpec, CylinderSpec, SphereSpec, ConeSpec, ExtrudeSpec, FilletSpec } from '@/lib/types/geometrySpec';
 import { filletBoxEdge, filletAllBoxEdges, getBoxEdges, type EdgeInfo } from '@/lib/filletEngine';
 import { union, subtract, intersect, type BooleanOperation } from '@/lib/booleanEngine';
+import { revolve } from '@/lib/revolveEngine';
+import { linearPattern, circularPattern } from '@/lib/patternEngine';
+import { shellBox } from '@/lib/shellEngine';
 
 export interface ArtifactGraph {
   artifacts: string[];
@@ -531,6 +534,100 @@ export function buildArtifactGraphFromGeometry(spec: GeometrySpec): ArtifactGrap
       if (bIdx !== -1) artifacts.splice(bIdx, 1);
     } catch (e) {
       console.error('Boolean operation failed:', e instanceof Error ? e.message : String(e));
+    }
+  }
+  
+  // Process Revolve operations
+  for (const rev of spec.revolves || []) {
+    try {
+      const result = revolve(
+        rev.profile,
+        rev.axis,
+        rev.angle,
+        rev.segments || 32,
+        rev.center
+      );
+      
+      artifacts.push(rev.id);
+      nodes[rev.id] = {
+        id: rev.id,
+        type: 'solid',
+        geometry: { vertices: result.vertices, indices: result.indices },
+      };
+    } catch (e) {
+      console.error('Revolve operation failed:', e instanceof Error ? e.message : String(e));
+    }
+  }
+  
+  // Process Linear Pattern operations
+  for (const pat of spec.linearPatterns || []) {
+    const sourceNode = nodes[pat.sourceId];
+    if (!sourceNode?.geometry) continue;
+    
+    try {
+      const normals = sourceNode.geometry.vertices.map(() => [0, 1, 0] as number[]);
+      
+      const result = linearPattern(
+        sourceNode.geometry.vertices,
+        sourceNode.geometry.indices,
+        normals,
+        pat.direction,
+        pat.count,
+        pat.spacing
+      );
+      
+      sourceNode.geometry = { vertices: result.vertices, indices: result.indices };
+    } catch (e) {
+      console.error('Linear pattern failed:', e instanceof Error ? e.message : String(e));
+    }
+  }
+  
+  // Process Circular Pattern operations
+  for (const pat of spec.circularPatterns || []) {
+    const sourceNode = nodes[pat.sourceId];
+    if (!sourceNode?.geometry) continue;
+    
+    try {
+      // Generate dummy normals if not present
+      const normals = sourceNode.geometry.vertices.map(() => [0, 1, 0] as number[]);
+      
+      const result = circularPattern(
+        sourceNode.geometry.vertices,
+        sourceNode.geometry.indices,
+        normals,
+        pat.axis,
+        pat.center,
+        pat.count,
+        pat.angle || 360
+      );
+      
+      // Update source node with pattern result
+      sourceNode.geometry = { vertices: result.vertices, indices: result.indices };
+    } catch (e) {
+      console.error('Circular pattern failed:', e instanceof Error ? e.message : String(e));
+    }
+  }
+  
+  // Process Shell operations
+  for (const sh of spec.shells || []) {
+    const sourceNode = nodes[sh.sourceId];
+    if (!sourceNode?.geometry || !sourceNode.spec) continue;
+    
+    try {
+      // Only support box shell for now
+      if ('size' in sourceNode.spec) {
+        const boxSpec = sourceNode.spec as BoxSpec;
+        const result = shellBox(
+          boxSpec.size,
+          boxSpec.center,
+          sh.thickness,
+          sh.openFaces || []
+        );
+        
+        sourceNode.geometry = { vertices: result.vertices, indices: result.indices };
+      }
+    } catch (e) {
+      console.error('Shell operation failed:', e instanceof Error ? e.message : String(e));
     }
   }
   
