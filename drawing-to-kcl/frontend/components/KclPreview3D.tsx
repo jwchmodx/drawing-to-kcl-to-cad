@@ -245,6 +245,7 @@ export const KclPreview3D: React.FC<KclPreview3DProps> = ({
         const material = new THREE.MeshStandardMaterial({ 
           color: 0xffaa44,
           flatShading: true,
+          side: THREE.DoubleSide,
         });
         material.needsUpdate = true;
         materials.push(material);

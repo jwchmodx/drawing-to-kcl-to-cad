@@ -624,6 +624,8 @@ export function buildArtifactGraphFromGeometry(spec: GeometrySpec): ArtifactGrap
           sh.openFaces || []
         );
         
+        // Shell result logging removed
+        
         if (result.vertices.length > 0 && result.indices.length > 0) {
           sourceNode.geometry = { vertices: result.vertices, indices: result.indices };
         }
