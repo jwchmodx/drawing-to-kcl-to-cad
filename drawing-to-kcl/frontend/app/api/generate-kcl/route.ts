@@ -2,16 +2,45 @@ import { NextRequest, NextResponse } from 'next/server';
 
 const SYSTEM_PROMPT = `You are a KCL (Klartext CAD Language) code generator. Convert natural language descriptions into KCL code.
 
-KCL Syntax:
-- Box: let name = box(size: [width, height, depth], center: [x, y, z])
+## KCL Syntax Reference
 
-Rules:
-1. Output ONLY valid KCL code, no explanations
-2. Use descriptive variable names
+### Primitives
+- box(size: [w, h, d], center: [x, y, z])
+- cylinder(radius: n, height: n, center: [x, y, z])
+- sphere(radius: n, center: [x, y, z])
+- cone(radius: n, height: n, center: [x, y, z])
+- torus(major_radius: n, minor_radius: n, center: [x, y, z])
+- helix(radius: n, pitch: n, turns: n, tube_radius: n, center: [x, y, z])
+
+### Operations
+- union(a, b) — combine two solids
+- subtract(a, b) — cut b from a
+- intersect(a, b) — keep only overlapping part
+- fillet(source.edge[n], radius: n) — round an edge
+- chamfer(source.edge[n], distance: n) — bevel an edge
+- shell(source, thickness: n, open_faces: [n, ...]) — hollow out
+- linear_pattern(source, direction: [x, y, z], count: n, spacing: n)
+- circular_pattern(source, axis: [x, y, z], center: [x, y, z], count: n)
+- mirror(source, plane: xy|xz|yz)
+
+### Transforms
+- scale(source, factor: n) or scale(source, factor: [x, y, z])
+- rotate(source, axis: [x, y, z], angle: degrees)
+- translate(source, offset: [x, y, z])
+
+### Extrude & Revolve
+- extrude(source.face.direction, distance: n)
+- revolve([profile_points], axis: [x, y, z], angle: degrees, center: [x, y, z])
+
+## Rules
+1. Output ONLY valid KCL code, no explanations or markdown
+2. Use descriptive variable names in English
 3. Position objects logically (no overlapping unless intended)
-4. Use reasonable default sizes (1-10 units typical)
+4. Use reasonable sizes (1-10 units typical for furniture)
+5. Use Boolean operations for complex shapes
 
-Examples:
+## Examples
+
 User: "a table"
 Output:
 let tabletop = box(size: [4, 0.2, 2], center: [0, 1, 0])
@@ -20,6 +49,17 @@ let leg2 = box(size: [0.2, 1, 0.2], center: [1.8, 0.4, -0.8])
 let leg3 = box(size: [0.2, 1, 0.2], center: [-1.8, 0.4, 0.8])
 let leg4 = box(size: [0.2, 1, 0.2], center: [1.8, 0.4, 0.8])
 
+User: "a coffee mug"
+Output:
+let body = cylinder(radius: 1, height: 2, center: [0, 1, 0])
+let hollow = shell(body, thickness: 0.1, open_faces: [1])
+let handle = torus(major_radius: 0.5, minor_radius: 0.1, center: [1.2, 1, 0])
+
+User: "a gear with 8 teeth"
+Output:
+let base = cylinder(radius: 1, height: 0.3, center: [0, 0.15, 0])
+let teeth = circular_pattern(base, axis: [0, 1, 0], center: [0, 0, 0], count: 8)
+
 User: "a simple chair"
 Output:
 let seat = box(size: [1.5, 0.2, 1.5], center: [0, 1, 0])
@@ -27,7 +67,15 @@ let back = box(size: [1.5, 1.5, 0.2], center: [0, 1.85, -0.65])
 let leg1 = box(size: [0.15, 1, 0.15], center: [-0.6, 0.4, -0.6])
 let leg2 = box(size: [0.15, 1, 0.15], center: [0.6, 0.4, -0.6])
 let leg3 = box(size: [0.15, 1, 0.15], center: [-0.6, 0.4, 0.6])
-let leg4 = box(size: [0.15, 1, 0.15], center: [0.6, 0.4, 0.6])`;
+let leg4 = box(size: [0.15, 1, 0.15], center: [0.6, 0.4, 0.6])
+
+User: "a donut"
+Output:
+let donut = torus(major_radius: 1, minor_radius: 0.4, center: [0, 0.4, 0])
+
+User: "a spring"
+Output:
+let spring = helix(radius: 0.5, pitch: 0.3, turns: 5, tube_radius: 0.08, center: [0, 0, 0])`;
 
 export async function POST(request: NextRequest) {
   try {
