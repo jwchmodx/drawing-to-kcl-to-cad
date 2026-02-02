@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>FORGE CAD - New Features Demo</title>
+  <style>
+    body { margin: 0; background: #1a1a2e; color: white; font-family: monospace; }
+    .container { display: flex; flex-wrap: wrap; padding: 20px; }
+    .demo { width: 300px; height: 300px; margin: 10px; background: #16213e; border-radius: 8px; overflow: hidden; }
+    .demo h3 { margin: 0; padding: 10px; background: #0f3460; text-align: center; font-size: 14px; }
+    .demo canvas { width: 100%; height: calc(100% - 40px); }
+    h1 { text-align: center; padding: 20px; margin: 0; background: #0f3460; }
+  </style>
+</head>
+<body>
+  <h1>FORGE CAD - New Features Demo</h1>
+  <div class="container">
+    <div class="demo" id="boolean"><h3>Boolean (Union/Subtract/Intersect)</h3></div>
+    <div class="demo" id="chamfer"><h3>Chamfer</h3></div>
+    <div class="demo" id="revolve"><h3>Revolve</h3></div>
+    <div class="demo" id="pattern"><h3>Pattern (Linear/Circular)</h3></div>
+    <div class="demo" id="shell"><h3>Shell</h3></div>
+  </div>
+  
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/"
+      }
+    }
+  </script>
+  
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    
+    function createScene(containerId) {
+      const container = document.getElementById(containerId);
+      const w = container.clientWidth;
+      const h = container.clientHeight - 40;
+      
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x16213e);
+      
+      const camera = new THREE.PerspectiveCamera(45, w / h, 0.1, 100);
+      camera.position.set(3, 3, 3);
+      
+      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(w, h);
+      container.appendChild(renderer.domElement);
+      
+      const controls = new OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      
+      // Lights
+      scene.add(new THREE.AmbientLight(0x404040, 2));
+      const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+      dirLight.position.set(5, 5, 5);
+      scene.add(dirLight);
+      
+      // Grid
+      const grid = new THREE.GridHelper(4, 10, 0x444444, 0x222222);
+      scene.add(grid);
+      
+      function animate() {
+        requestAnimationFrame(animate);
+        controls.update();
+        renderer.render(scene, camera);
+      }
+      animate();
+      
+      return scene;
+    }
+    
+    // 1. Boolean Demo
+    const boolScene = createScene('boolean');
+    {
+      // Union example: box + cylinder
+      const box = new THREE.BoxGeometry(1.5, 1.5, 1.5);
+      const cyl = new THREE.CylinderGeometry(0.4, 0.4, 2, 32);
+      
+      const mat1 = new THREE.MeshStandardMaterial({ color: 0x4a90d9, transparent: true, opacity: 0.7 });
+      const mat2 = new THREE.MeshStandardMaterial({ color: 0xe94560, transparent: true, opacity: 0.7 });
+      
+      const boxMesh = new THREE.Mesh(box, mat1);
+      const cylMesh = new THREE.Mesh(cyl, mat2);
+      
+      boxMesh.position.x = -0.5;
+      cylMesh.position.x = 0.5;
+      
+      boolScene.add(boxMesh);
+      boolScene.add(cylMesh);
+      
+      // Label
+      const sprite = makeTextSprite('Union/Subtract/Intersect');
+      sprite.position.y = 2;
+      boolScene.add(sprite);
+    }
+    
+    // 2. Chamfer Demo
+    const chamferScene = createScene('chamfer');
+    {
+      // Box with chamfered edges visualization
+      const geometry = new THREE.BoxGeometry(1.5, 1.5, 1.5);
+      const edges = new THREE.EdgesGeometry(geometry);
+      
+      const mat = new THREE.MeshStandardMaterial({ color: 0x4a90d9 });
+      const mesh = new THREE.Mesh(geometry, mat);
+      
+      // Highlight one edge for chamfer
+      const lineMat = new THREE.LineBasicMaterial({ color: 0xe94560, linewidth: 2 });
+      const line = new THREE.LineSegments(edges, lineMat);
+      
+      chamferScene.add(mesh);
+      chamferScene.add(line);
+      
+      // Arrow showing chamfer direction
+      const arrow = new THREE.ArrowHelper(
+        new THREE.Vector3(1, 1, 0).normalize(),
+        new THREE.Vector3(0.75, 0.75, 0.75),
+        0.5,
+        0xff0000
+      );
+      chamferScene.add(arrow);
+    }
+    
+    // 3. Revolve Demo
+    const revolveScene = createScene('revolve');
+    {
+      // Create a lathe geometry (wine glass profile)
+      const points = [];
+      for (let i = 0; i < 20; i++) {
+        const t = i / 19;
+        let r;
+        if (t < 0.15) r = 0.3;
+        else if (t < 0.2) r = 0.08;
+        else if (t < 0.7) r = 0.08 + (t - 0.2) * 0.84;
+        else r = 0.5 - (t - 0.7) * 0.3;
+        points.push(new THREE.Vector2(r, t * 2 - 1));
+      }
+      
+      const lathe = new THREE.LatheGeometry(points, 32);
+      const mat = new THREE.MeshStandardMaterial({ color: 0x4a90d9, side: THREE.DoubleSide });
+      const mesh = new THREE.Mesh(lathe, mat);
+      
+      revolveScene.add(mesh);
+      
+      // Show axis
+      const axisLine = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(0, -1.5, 0),
+          new THREE.Vector3(0, 1.5, 0)
+        ]),
+        new THREE.LineBasicMaterial({ color: 0xe94560 })
+      );
+      revolveScene.add(axisLine);
+    }
+    
+    // 4. Pattern Demo
+    const patternScene = createScene('pattern');
+    {
+      // Linear pattern
+      const baseGeom = new THREE.CylinderGeometry(0.1, 0.1, 0.5, 16);
+      const mat = new THREE.MeshStandardMaterial({ color: 0x4a90d9 });
+      
+      for (let i = 0; i < 5; i++) {
+        const mesh = new THREE.Mesh(baseGeom, mat);
+        mesh.position.set(-1.5 + i * 0.7, 0.5, 0);
+        patternScene.add(mesh);
+      }
+      
+      // Circular pattern
+      const mat2 = new THREE.MeshStandardMaterial({ color: 0xe94560 });
+      for (let i = 0; i < 8; i++) {
+        const angle = (i / 8) * Math.PI * 2;
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.4, 0.15), mat2);
+        mesh.position.set(Math.cos(angle) * 0.8, -0.5, Math.sin(angle) * 0.8);
+        mesh.rotation.y = -angle;
+        patternScene.add(mesh);
+      }
+    }
+    
+    // 5. Shell Demo
+    const shellScene = createScene('shell');
+    {
+      // Create a hollow box (shell)
+      const outerSize = 1.5;
+      const thickness = 0.15;
+      
+      // Outer box
+      const outer = new THREE.BoxGeometry(outerSize, outerSize, outerSize);
+      const inner = new THREE.BoxGeometry(
+        outerSize - thickness * 2,
+        outerSize - thickness * 2,
+        outerSize - thickness * 2
+      );
+      
+      const mat = new THREE.MeshStandardMaterial({ 
+        color: 0x4a90d9, 
+        transparent: true, 
+        opacity: 0.5,
+        side: THREE.DoubleSide
+      });
+      
+      // Create cross-section view effect
+      const outerMesh = new THREE.Mesh(outer, mat);
+      
+      // Inner void visualization
+      const innerMat = new THREE.MeshStandardMaterial({ 
+        color: 0x16213e,
+        side: THREE.BackSide
+      });
+      const innerMesh = new THREE.Mesh(inner, innerMat);
+      
+      // Cut plane to show shell thickness
+      const planeGeo = new THREE.PlaneGeometry(2, 2);
+      const planeMat = new THREE.MeshBasicMaterial({ 
+        color: 0xe94560, 
+        transparent: true, 
+        opacity: 0.3,
+        side: THREE.DoubleSide
+      });
+      const cutPlane = new THREE.Mesh(planeGeo, planeMat);
+      cutPlane.position.z = 0.75;
+      
+      shellScene.add(outerMesh);
+      shellScene.add(innerMesh);
+      shellScene.add(cutPlane);
+    }
+    
+    function makeTextSprite(text) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 256;
+      canvas.height = 64;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = 'white';
+      ctx.font = '24px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(text, 128, 40);
+      
+      const texture = new THREE.CanvasTexture(canvas);
+      const mat = new THREE.SpriteMaterial({ map: texture });
+      const sprite = new THREE.Sprite(mat);
+      sprite.scale.set(2, 0.5, 1);
+      return sprite;
+    }
+  </script>
+</body>
+</html>
