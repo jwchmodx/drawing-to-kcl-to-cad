@@ -7,8 +7,10 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $BackendDir = Join-Path $ScriptDir "backend"
 $FrontendDir = Join-Path $ScriptDir "frontend"
 
-$BackendLogFile = Join-Path $ScriptDir ".backend.log"
-$FrontendLogFile = Join-Path $ScriptDir ".frontend.log"
+$LogsDir = Join-Path $ScriptDir "logs"
+if (-not (Test-Path $LogsDir)) { New-Item -ItemType Directory -Path $LogsDir | Out-Null }
+$BackendLogFile = Join-Path $LogsDir "backend.log"
+$FrontendLogFile = Join-Path $LogsDir "frontend.log"
 
 # Cleanup function
 function Cleanup {

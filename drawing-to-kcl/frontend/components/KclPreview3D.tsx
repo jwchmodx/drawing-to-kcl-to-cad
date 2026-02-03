@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useCallback, useState, forwardRef, useImperativeHandle } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
+import { TransformControls } from 'three/examples/jsm/controls/TransformControls';
 import {
   computeBoundingBox,
   computeCameraForBounds,
@@ -10,6 +11,7 @@ import { SectionEngine, PlaneType, SectionEngineState, createDefaultSectionState
 import { SectionControls } from './SectionControls';
 import { getMaterialEngine, MaterialEngine } from '../lib/materialEngine';
 import { MaterialProperties } from '../lib/materialPresets';
+import type { EditMode, Transform } from '@/hooks/useDirectEdit';
 
 type MeshPreview = {
   id?: string | null;
@@ -41,6 +43,27 @@ export interface KclPreview3DRef {
   refreshMaterials: () => void;
   /** Live update material properties on a mesh (for preview) */
   updateMaterialLive: (meshId: string, properties: Partial<MaterialProperties>) => void;
+  /** Get scene reference for external use */
+  getSceneRef: () => SceneRef | null;
+  /** Get mesh by ID */
+  getMeshById: (meshId: string) => THREE.Mesh | null;
+  /** Update gizmo target */
+  setGizmoTarget: (meshId: string | null) => void;
+  /** Set gizmo mode */
+  setGizmoMode: (mode: 'translate' | 'rotate' | 'scale') => void;
+}
+
+export interface SceneRef {
+  scene: THREE.Scene;
+  camera: THREE.PerspectiveCamera;
+  renderer: THREE.WebGLRenderer;
+  controls: OrbitControls;
+  transformControls: TransformControls | null;
+  meshes: THREE.Mesh[];
+  highlightMesh: THREE.Mesh | null;
+  raycaster: THREE.Raycaster;
+  mouse: THREE.Vector2;
+  sectionEngine: SectionEngine | null;
 }
 
 export interface KclPreview3DProps {
@@ -49,6 +72,7 @@ export interface KclPreview3DProps {
   selectedFace?: FaceSelection | null;
   editMode?: boolean;
   showSectionControls?: boolean;
+  onSectionPanelClose?: () => void;
   onViewChange?: (view: ViewType) => void;
   /** Enable material system integration */
   enableMaterials?: boolean;
@@ -56,6 +80,20 @@ export interface KclPreview3DProps {
   onMeshSelect?: (meshId: string | null) => void;
   /** Material engine instance (uses singleton if not provided) */
   materialEngine?: MaterialEngine;
+  /** Direct edit mode */
+  directEditMode?: EditMode;
+  /** Show transform gizmo */
+  showGizmo?: boolean;
+  /** Selected mesh ID for gizmo */
+  selectedMeshId?: string | null;
+  /** Callback when transform changes */
+  onTransformChange?: (transform: Transform) => void;
+  /** Callback when transform ends */
+  onTransformEnd?: (transform: Transform) => void;
+  /** Callback for push/pull drag */
+  onPushPullDrag?: (delta: number) => void;
+  /** Callback for push/pull end */
+  onPushPullEnd?: (delta: number) => void;
 }
 
 function getAllRenderableMeshes(preview: unknown): MeshPreview[] {
@@ -67,7 +105,24 @@ function getAllRenderableMeshes(preview: unknown): MeshPreview[] {
 }
 
 /**
- * Three.js-based preview renderer with face selection support.
+ * Extract transform from THREE.Object3D
+ */
+function extractTransform(object: THREE.Object3D): Transform {
+  const euler = new THREE.Euler().setFromQuaternion(object.quaternion, 'XYZ');
+  
+  return {
+    position: [object.position.x, object.position.y, object.position.z],
+    rotation: [
+      THREE.MathUtils.radToDeg(euler.x),
+      THREE.MathUtils.radToDeg(euler.y),
+      THREE.MathUtils.radToDeg(euler.z),
+    ],
+    scale: [object.scale.x, object.scale.y, object.scale.z],
+  };
+}
+
+/**
+ * Three.js-based preview renderer with face selection and transform gizmo support.
  */
 export const KclPreview3D = forwardRef<KclPreview3DRef, KclPreview3DProps>(({ 
   preview, 
@@ -75,27 +130,30 @@ export const KclPreview3D = forwardRef<KclPreview3DRef, KclPreview3DProps>(({
   selectedFace,
   editMode = false,
   showSectionControls = true,
+  onSectionPanelClose,
   onViewChange,
   enableMaterials = true,
   onMeshSelect,
   materialEngine: providedMaterialEngine,
+  directEditMode = 'select',
+  showGizmo = false,
+  selectedMeshId = null,
+  onTransformChange,
+  onTransformEnd,
+  onPushPullDrag,
+  onPushPullEnd,
 }, ref) => {
   // Material engine (use provided or singleton)
   const materialEngine = providedMaterialEngine ?? getMaterialEngine();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const boundsRef = useRef<BoundingBox | null>(null);
   const currentViewRef = useRef<ViewType>('perspective');
-  const sceneRef = useRef<{
-    scene: THREE.Scene;
-    camera: THREE.PerspectiveCamera;
-    renderer: THREE.WebGLRenderer;
-    controls: OrbitControls;
-    meshes: THREE.Mesh[];
-    highlightMesh: THREE.Mesh | null;
-    raycaster: THREE.Raycaster;
-    mouse: THREE.Vector2;
-    sectionEngine: SectionEngine | null;
-  } | null>(null);
+  const sceneRef = useRef<SceneRef | null>(null);
+  const pushPullStateRef = useRef<{
+    active: boolean;
+    startY: number;
+    startHeight: number;
+  }>({ active: false, startY: 0, startHeight: 0 });
 
   // Camera view functions
   const setView = useCallback((view: ViewType) => {
@@ -225,6 +283,37 @@ export const KclPreview3D = forwardRef<KclPreview3DRef, KclPreview3DProps>(({
     }
   }, []);
 
+  const getSceneRef = useCallback(() => {
+    return sceneRef.current;
+  }, []);
+
+  const getMeshById = useCallback((meshId: string): THREE.Mesh | null => {
+    if (!sceneRef.current) return null;
+    return sceneRef.current.meshes.find(m => m.userData.meshId === meshId) || null;
+  }, []);
+
+  const setGizmoTarget = useCallback((meshId: string | null) => {
+    if (!sceneRef.current?.transformControls) return;
+    
+    const tc = sceneRef.current.transformControls;
+    
+    if (meshId) {
+      const mesh = sceneRef.current.meshes.find(m => m.userData.meshId === meshId);
+      if (mesh) {
+        tc.attach(mesh);
+        (tc as unknown as THREE.Object3D).visible = true;
+      }
+    } else {
+      tc.detach();
+      (tc as unknown as THREE.Object3D).visible = false;
+    }
+  }, []);
+
+  const setGizmoMode = useCallback((mode: 'translate' | 'rotate' | 'scale') => {
+    if (!sceneRef.current?.transformControls) return;
+    sceneRef.current.transformControls.setMode(mode);
+  }, []);
+
   // Expose methods via ref
   useImperativeHandle(ref, () => ({
     setView,
@@ -234,7 +323,11 @@ export const KclPreview3D = forwardRef<KclPreview3DRef, KclPreview3DProps>(({
     updateMeshMaterial,
     refreshMaterials,
     updateMaterialLive,
-  }), [setView, focusOnSelection, resetCamera, getCurrentView, updateMeshMaterial, refreshMaterials, updateMaterialLive]);
+    getSceneRef,
+    getMeshById,
+    setGizmoTarget,
+    setGizmoMode,
+  }), [setView, focusOnSelection, resetCamera, getCurrentView, updateMeshMaterial, refreshMaterials, updateMaterialLive, getSceneRef, getMeshById, setGizmoTarget, setGizmoMode]);
 
   // Section state management
   const [sectionState, setSectionState] = useState<SectionEngineState>(createDefaultSectionState());
@@ -275,11 +368,11 @@ export const KclPreview3D = forwardRef<KclPreview3DRef, KclPreview3DProps>(({
     return { min: -10, max: 10 };
   }, []);
 
-  // Handle mouse click for face selection
+  // Handle mouse click for face/object selection
   const handleClick = useCallback((event: MouseEvent) => {
-    if (!sceneRef.current || !editMode || !onFaceSelect) return;
+    if (!sceneRef.current || !editMode) return;
     
-    const { renderer, camera, meshes, raycaster, mouse, scene } = sceneRef.current;
+    const { renderer, camera, meshes, raycaster, mouse, scene, transformControls } = sceneRef.current;
     const rect = renderer.domElement.getBoundingClientRect();
     
     mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
@@ -292,10 +385,12 @@ export const KclPreview3D = forwardRef<KclPreview3DRef, KclPreview3DProps>(({
       const hit = intersects[0];
       const faceIndex = hit.faceIndex ?? 0;
       const face = hit.face;
+      const hitMesh = hit.object as THREE.Mesh;
+      const meshId = hitMesh.userData.meshId || null;
       
-      if (face) {
+      if (face && onFaceSelect) {
         // Calculate face center
-        const geometry = (hit.object as THREE.Mesh).geometry;
+        const geometry = hitMesh.geometry;
         const position = geometry.getAttribute('position');
         const indices = geometry.index;
         
@@ -314,9 +409,6 @@ export const KclPreview3D = forwardRef<KclPreview3DRef, KclPreview3DProps>(({
         
         const center = new THREE.Vector3().addVectors(v0, v1).add(v2).divideScalar(3);
         
-        // Get mesh ID from userData
-        const meshId = (hit.object as THREE.Mesh).userData.meshId || null;
-        
         const selection: FaceSelection = {
           meshId,
           faceIndex,
@@ -325,17 +417,62 @@ export const KclPreview3D = forwardRef<KclPreview3DRef, KclPreview3DProps>(({
         };
         
         onFaceSelect(selection);
-        onMeshSelect?.(meshId);
         
         // Highlight selected face
-        highlightFace(scene, hit.object as THREE.Mesh, faceIndex);
+        highlightFace(scene, hitMesh, faceIndex);
+      }
+      
+      onMeshSelect?.(meshId);
+      
+      // Attach transform controls if in transform mode
+      if (transformControls && showGizmo && directEditMode !== 'select' && directEditMode !== 'pushpull') {
+        transformControls.attach(hitMesh);
+        (transformControls as unknown as THREE.Object3D).visible = true;
       }
     } else {
-      onFaceSelect(null);
+      onFaceSelect?.(null);
       onMeshSelect?.(null);
       clearHighlight(scene);
+      
+      if (transformControls) {
+        transformControls.detach();
+        (transformControls as unknown as THREE.Object3D).visible = false;
+      }
     }
-  }, [editMode, onFaceSelect, onMeshSelect]);
+  }, [editMode, onFaceSelect, onMeshSelect, showGizmo, directEditMode]);
+
+  // Push/Pull mouse handlers
+  const handlePushPullMouseDown = useCallback((event: MouseEvent) => {
+    if (!sceneRef.current || directEditMode !== 'pushpull' || !selectedFace) return;
+    
+    pushPullStateRef.current = {
+      active: true,
+      startY: event.clientY,
+      startHeight: 0,
+    };
+    
+    sceneRef.current.controls.enabled = false;
+  }, [directEditMode, selectedFace]);
+
+  const handlePushPullMouseMove = useCallback((event: MouseEvent) => {
+    if (!pushPullStateRef.current.active || directEditMode !== 'pushpull') return;
+    
+    const delta = (pushPullStateRef.current.startY - event.clientY) * 0.01;
+    onPushPullDrag?.(delta);
+  }, [directEditMode, onPushPullDrag]);
+
+  const handlePushPullMouseUp = useCallback((event: MouseEvent) => {
+    if (!pushPullStateRef.current.active || directEditMode !== 'pushpull') return;
+    
+    const delta = (pushPullStateRef.current.startY - event.clientY) * 0.01;
+    onPushPullEnd?.(delta);
+    
+    pushPullStateRef.current = { active: false, startY: 0, startHeight: 0 };
+    
+    if (sceneRef.current) {
+      sceneRef.current.controls.enabled = true;
+    }
+  }, [directEditMode, onPushPullEnd]);
 
   // Highlight a specific face
   const highlightFace = (scene: THREE.Scene, mesh: THREE.Mesh, faceIndex: number) => {
@@ -393,6 +530,40 @@ export const KclPreview3D = forwardRef<KclPreview3DRef, KclPreview3DProps>(({
     }
   };
 
+  // Update gizmo when mode changes
+  useEffect(() => {
+    if (!sceneRef.current?.transformControls) return;
+    
+    const tc = sceneRef.current.transformControls;
+    
+    if (directEditMode === 'translate') {
+      tc.setMode('translate');
+    } else if (directEditMode === 'rotate') {
+      tc.setMode('rotate');
+    } else if (directEditMode === 'scale') {
+      tc.setMode('scale');
+    }
+    
+    (tc as unknown as THREE.Object3D).visible = showGizmo && selectedMeshId !== null && 
+      directEditMode !== 'select' && directEditMode !== 'pushpull';
+  }, [directEditMode, showGizmo, selectedMeshId]);
+
+  // Update gizmo target when selection changes
+  useEffect(() => {
+    if (!sceneRef.current?.transformControls) return;
+    
+    const tc = sceneRef.current.transformControls;
+    
+    if (selectedMeshId && showGizmo) {
+      const mesh = sceneRef.current.meshes.find(m => m.userData.meshId === selectedMeshId);
+      if (mesh) {
+        tc.attach(mesh);
+      }
+    } else {
+      tc.detach();
+    }
+  }, [selectedMeshId, showGizmo]);
+
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -401,6 +572,7 @@ export const KclPreview3D = forwardRef<KclPreview3DRef, KclPreview3DProps>(({
 
     let renderer: THREE.WebGLRenderer | null = null;
     let controls: OrbitControls | null = null;
+    let transformControls: TransformControls | null = null;
     let animationFrameId: number | null = null;
     const geometries: THREE.BufferGeometry[] = [];
     const materials: THREE.Material[] = [];
@@ -468,12 +640,21 @@ export const KclPreview3D = forwardRef<KclPreview3DRef, KclPreview3DProps>(({
         if (enableMaterials && materialEngine) {
           material = materialEngine.getMaterialForMesh(meshId);
           material.flatShading = true;
+          material.side = THREE.DoubleSide; // Prevent back-face culling at grazing angles
         } else {
           material = new THREE.MeshStandardMaterial({ 
             color: 0xffaa44,
             flatShading: true,
             side: THREE.DoubleSide,
           });
+        }
+        // Prevent z-fighting between mesh and edge lines at certain view angles
+        material.polygonOffset = true;
+        material.polygonOffsetFactor = 1;
+        material.polygonOffsetUnits = 1;
+        // Opaque meshes must write to depth buffer for correct ordering
+        if (!material.transparent) {
+          material.depthWrite = true;
         }
         material.needsUpdate = true;
         materials.push(material);
@@ -484,11 +665,16 @@ export const KclPreview3D = forwardRef<KclPreview3DRef, KclPreview3DProps>(({
         scene.add(mesh);
         threeMeshes.push(mesh);
         
-        // Add edge lines for clear boundaries - darker and thicker
-        const edgeGeometry = new THREE.EdgesGeometry(geometry, 15); // lower threshold = more edges
-        const edgeMaterial = new THREE.LineBasicMaterial({ color: 0x000000, linewidth: 2 });
+        // Add edge lines for clear boundaries - render after mesh to avoid z-fighting
+        const edgeGeometry = new THREE.EdgesGeometry(geometry, 25); // 25° threshold reduces visual clutter
+        const edgeMaterial = new THREE.LineBasicMaterial({
+          color: 0x333333,
+          depthTest: true,
+          depthWrite: false, // edges don't occlude mesh
+        });
         const edges = new THREE.LineSegments(edgeGeometry, edgeMaterial);
         edges.name = `edges_${index}`;
+        edges.renderOrder = 1;
         scene.add(edges);
         
         // Add wireframe for edit mode
@@ -505,6 +691,32 @@ export const KclPreview3D = forwardRef<KclPreview3DRef, KclPreview3DProps>(({
 
       controls = new OrbitControls(camera, renderer.domElement);
       controls.enableDamping = false;
+
+      // Initialize TransformControls
+      transformControls = new TransformControls(camera, renderer.domElement);
+      transformControls.setSize(0.8);
+      (transformControls as unknown as THREE.Object3D).visible = false;
+      scene.add(transformControls as unknown as THREE.Object3D);
+
+      // TransformControls event handlers
+      transformControls.addEventListener('dragging-changed', (event) => {
+        // Disable orbit controls while dragging gizmo
+        controls!.enabled = !event.value;
+      });
+
+      transformControls.addEventListener('change', () => {
+        if (transformControls!.object) {
+          const transform = extractTransform(transformControls!.object);
+          onTransformChange?.(transform);
+        }
+      });
+
+      transformControls.addEventListener('mouseUp', () => {
+        if (transformControls!.object) {
+          const transform = extractTransform(transformControls!.object);
+          onTransformEnd?.(transform);
+        }
+      });
 
       // Initialize section engine
       const sectionEngine = new SectionEngine(renderer, scene);
@@ -524,6 +736,7 @@ export const KclPreview3D = forwardRef<KclPreview3DRef, KclPreview3DProps>(({
         camera,
         renderer,
         controls,
+        transformControls,
         meshes: threeMeshes,
         highlightMesh: null,
         raycaster: new THREE.Raycaster(),
@@ -537,6 +750,9 @@ export const KclPreview3D = forwardRef<KclPreview3DRef, KclPreview3DProps>(({
       // Add click listener for face selection
       if (editMode) {
         renderer.domElement.addEventListener('click', handleClick);
+        renderer.domElement.addEventListener('mousedown', handlePushPullMouseDown);
+        renderer.domElement.addEventListener('mousemove', handlePushPullMouseMove);
+        renderer.domElement.addEventListener('mouseup', handlePushPullMouseUp);
         renderer.domElement.style.cursor = 'crosshair';
       }
 
@@ -561,6 +777,13 @@ export const KclPreview3D = forwardRef<KclPreview3DRef, KclPreview3DProps>(({
       }
       if (renderer) {
         renderer.domElement.removeEventListener('click', handleClick);
+        renderer.domElement.removeEventListener('mousedown', handlePushPullMouseDown);
+        renderer.domElement.removeEventListener('mousemove', handlePushPullMouseMove);
+        renderer.domElement.removeEventListener('mouseup', handlePushPullMouseUp);
+      }
+      if (transformControls) {
+        transformControls.detach();
+        transformControls.dispose();
       }
       if (controls) {
         controls.dispose();
@@ -578,7 +801,23 @@ export const KclPreview3D = forwardRef<KclPreview3DRef, KclPreview3DProps>(({
       }
       sceneRef.current = null;
     };
-  }, [preview, editMode, handleClick, enableMaterials, materialEngine]);
+  }, [preview, editMode, handleClick, handlePushPullMouseDown, handlePushPullMouseMove, handlePushPullMouseUp, enableMaterials, materialEngine, onTransformChange, onTransformEnd]);
+
+  // Determine cursor based on mode
+  const getCursor = () => {
+    switch (directEditMode) {
+      case 'translate':
+        return 'move';
+      case 'rotate':
+        return 'crosshair';
+      case 'scale':
+        return 'nwse-resize';
+      case 'pushpull':
+        return 'ns-resize';
+      default:
+        return editMode ? 'crosshair' : 'default';
+    }
+  };
 
   return (
     <div className="relative w-full h-full min-h-0">
@@ -586,7 +825,18 @@ export const KclPreview3D = forwardRef<KclPreview3DRef, KclPreview3DProps>(({
         ref={containerRef} 
         className="w-full h-full" 
         data-testid="kcl-preview-3d"
+        style={{ cursor: getCursor() }}
       />
+      
+      {/* Direct Edit Mode Indicator */}
+      {editMode && directEditMode !== 'select' && (
+        <div className="absolute top-3 left-3 z-10 px-3 py-1.5 bg-cyan/20 border border-cyan/30 rounded-lg text-xs font-medium text-cyan">
+          {directEditMode === 'translate' && '↔ Move Mode (G)'}
+          {directEditMode === 'rotate' && '↻ Rotate Mode (R)'}
+          {directEditMode === 'scale' && '⬡ Scale Mode (S)'}
+          {directEditMode === 'pushpull' && '⬆ Push/Pull Mode (P)'}
+        </div>
+      )}
       
       {/* Section Controls UI */}
       {showSectionControls && (
@@ -598,6 +848,7 @@ export const KclPreview3D = forwardRef<KclPreview3DRef, KclPreview3DProps>(({
             onPositionChange={handlePositionChange}
             onFlipPlane={handleFlipPlane}
             getPlaneRange={getPlaneRange}
+            onClose={onSectionPanelClose}
           />
         </div>
       )}

@@ -12,6 +12,8 @@ export interface SectionControlsProps {
   onPositionChange: (type: PlaneType, position: number) => void;
   onFlipPlane: (type: PlaneType, flip: boolean) => void;
   getPlaneRange: (type: PlaneType) => { min: number; max: number };
+  /** Called when user clicks close - hide the panel */
+  onClose?: () => void;
 }
 
 const PLANE_COLORS: Record<PlaneType, string> = {
@@ -33,6 +35,7 @@ export const SectionControls: React.FC<SectionControlsProps> = ({
   onPositionChange,
   onFlipPlane,
   getPlaneRange,
+  onClose,
 }) => {
   return (
     <div className="bg-zinc-900/95 backdrop-blur-sm rounded-lg border border-zinc-700 p-3 min-w-[220px] shadow-xl">
@@ -54,7 +57,8 @@ export const SectionControls: React.FC<SectionControlsProps> = ({
           </svg>
           <span className="text-sm font-medium text-zinc-200">단면 보기</span>
         </div>
-        <label className="relative inline-flex items-center cursor-pointer">
+        <div className="flex items-center gap-2">
+          <label className="relative inline-flex items-center cursor-pointer">
           <input
             type="checkbox"
             className="sr-only peer"
@@ -63,6 +67,19 @@ export const SectionControls: React.FC<SectionControlsProps> = ({
           />
           <div className="w-9 h-5 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-cyan-600"></div>
         </label>
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="p-1 rounded hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 transition-colors"
+              title="단면 패널 숨기기"
+              aria-label="단면 패널 숨기기"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Plane controls */}

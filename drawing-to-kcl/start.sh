@@ -22,9 +22,11 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 BACKEND_DIR="$SCRIPT_DIR/backend"
 FRONTEND_DIR="$SCRIPT_DIR/frontend"
 
-# PID files for cleanup
-BACKEND_PID_FILE="$SCRIPT_DIR/.backend.pid"
-FRONTEND_PID_FILE="$SCRIPT_DIR/.frontend.pid"
+# Logs directory and PID files for cleanup
+LOGS_DIR="$SCRIPT_DIR/logs"
+mkdir -p "$LOGS_DIR"
+BACKEND_PID_FILE="$LOGS_DIR/backend.pid"
+FRONTEND_PID_FILE="$LOGS_DIR/frontend.pid"
 
 # Cleanup function
 cleanup() {
@@ -104,11 +106,11 @@ if ! python -m uvicorn --help &> /dev/null; then
     pip install -r requirements.txt
 fi
 
-python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload > "$SCRIPT_DIR/.backend.log" 2>&1 &
+python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload > "$LOGS_DIR/backend.log" 2>&1 &
 BACKEND_PID=$!
 echo "$BACKEND_PID" > "$BACKEND_PID_FILE"
 echo -e "${GREEN}Backend server started (PID: $BACKEND_PID)${NC}"
-echo -e "${BLUE}Backend logs: $SCRIPT_DIR/.backend.log${NC}"
+echo -e "${BLUE}Backend logs: $LOGS_DIR/backend.log${NC}"
 
 # Wait a bit for backend to start
 sleep 2
@@ -123,11 +125,11 @@ if [ ! -d "node_modules" ]; then
     npm install
 fi
 
-npm run dev > "$SCRIPT_DIR/.frontend.log" 2>&1 &
+npm run dev > "$LOGS_DIR/frontend.log" 2>&1 &
 FRONTEND_PID=$!
 echo "$FRONTEND_PID" > "$FRONTEND_PID_FILE"
 echo -e "${GREEN}Frontend server started (PID: $FRONTEND_PID)${NC}"
-echo -e "${BLUE}Frontend logs: $SCRIPT_DIR/.frontend.log${NC}"
+echo -e "${BLUE}Frontend logs: $LOGS_DIR/frontend.log${NC}"
 
 # Wait a bit for frontend to start
 sleep 3

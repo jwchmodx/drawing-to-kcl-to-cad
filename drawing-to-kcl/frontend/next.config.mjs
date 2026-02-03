@@ -5,6 +5,8 @@ const require = createRequire(import.meta.url);
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // Tauri 빌드를 위한 정적 내보내기
+  output: process.env.TAURI_BUILD ? 'export' : undefined,
   webpack: (config, { isServer, webpack }) => {
     // Enable WebAssembly support
     config.experiments = {

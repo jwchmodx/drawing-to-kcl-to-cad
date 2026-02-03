@@ -65,9 +65,10 @@ coverage/
 # Test artifacts
 *.log
 *.lcov
+frontend/playwright-report/
 
-# Start script artifacts
-.backend.pid
-.frontend.pid
-.backend.log
-.frontend.log
+# Rust/Tauri build
+frontend/src-tauri/target/
+
+# Start script artifacts (logs and PID files)
+logs/

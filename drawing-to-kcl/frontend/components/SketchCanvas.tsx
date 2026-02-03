@@ -27,6 +27,14 @@ import {
   deleteElements,
   point2Dto3D,
 } from '../lib/sketchEngine';
+import {
+  DimensionalConstraint,
+  createLengthConstraint,
+  createRadiusConstraint,
+  createAngleConstraint,
+  measureLineLength,
+  measureCircleRadius,
+} from '../lib/dimensionalConstraints';
 
 // ═══════════════════════════════════════════════════════════════
 // TYPES
@@ -38,6 +46,13 @@ export interface SketchCanvasProps {
   onCursorMove: (position: Point2D | null) => void;
   width?: number;
   height?: number;
+  // Dimensional constraints
+  constraints?: DimensionalConstraint[];
+  onConstraintAdd?: (constraint: DimensionalConstraint) => void;
+  onConstraintUpdate?: (constraintId: string, value: number) => void;
+  onConstraintDelete?: (constraintId: string) => void;
+  dimensionMode?: boolean;
+  onDimensionModeChange?: (active: boolean) => void;
 }
 
 interface DrawingState {
@@ -248,6 +263,12 @@ export function SketchCanvas({
   onCursorMove,
   width,
   height,
+  constraints = [],
+  onConstraintAdd,
+  onConstraintUpdate,
+  onConstraintDelete,
+  dimensionMode = false,
+  onDimensionModeChange,
 }: SketchCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<{
@@ -274,6 +295,11 @@ export function SketchCanvas({
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState<Point2D | null>(null);
   const [currentSnap, setCurrentSnap] = useState<SnapPoint | null>(null);
+  const [internalDimensionMode, setInternalDimensionMode] = useState(false);
+  
+  // Use internal state if no external control
+  const isDimensionMode = onDimensionModeChange ? dimensionMode : internalDimensionMode;
+  const setDimensionMode = onDimensionModeChange || setInternalDimensionMode;
 
   // Initialize Three.js scene
   useEffect(() => {
@@ -754,19 +780,52 @@ export function SketchCanvas({
     }
   }, [sketchState, drawingState, onStateChange]);
 
+  // Add dimension to selected element
+  const addDimensionToSelection = useCallback(() => {
+    if (!onConstraintAdd || sketchState.selectedIds.length === 0) return;
+    
+    for (const elementId of sketchState.selectedIds) {
+      const element = sketchState.elements.find(e => e.id === elementId);
+      if (!element) continue;
+      
+      // Create appropriate dimension based on element type
+      if (element.type === 'line' && element.points.length >= 2) {
+        const length = measureLineLength({
+          start: { x: element.points[0].x, y: element.points[0].y, z: 0 },
+          end: { x: element.points[1].x, y: element.points[1].y, z: 0 },
+        });
+        if (length !== null) {
+          const constraint = createLengthConstraint(elementId, length, { x: 0, y: -0.5 });
+          onConstraintAdd(constraint);
+        }
+      } else if ((element.type === 'circle' || element.type === 'arc') && element.radius != null) {
+        const radius = measureCircleRadius({ radius: element.radius });
+        if (radius !== null) {
+          const constraint = createRadiusConstraint(elementId, radius, { x: 0.5, y: -0.5 });
+          onConstraintAdd(constraint);
+        }
+      }
+      // Note: For rectangles, we could add width/height constraints
+    }
+  }, [sketchState, onConstraintAdd]);
+
   // Keyboard handler
   const handleKeyDown = useCallback((event: KeyboardEvent) => {
     switch (event.key) {
       case 'Escape':
-        // Cancel current drawing
-        setDrawingState({
-          isDrawing: false,
-          startPoint: null,
-          currentPoint: null,
-          points: [],
-          previewElement: null,
-        });
-        onStateChange(clearSelection(sketchState));
+        // Cancel current drawing or exit dimension mode
+        if (isDimensionMode) {
+          setDimensionMode(false);
+        } else {
+          setDrawingState({
+            isDrawing: false,
+            startPoint: null,
+            currentPoint: null,
+            points: [],
+            previewElement: null,
+          });
+          onStateChange(clearSelection(sketchState));
+        }
         break;
         
       case 'Delete':
@@ -777,34 +836,52 @@ export function SketchCanvas({
           onStateChange(deleteElements(sketchState, sketchState.selectedIds));
         }
         break;
+      
+      // Dimension shortcut
+      case 'd':
+      case 'D':
+        if (sketchState.selectedIds.length > 0) {
+          // Add dimension to selected element
+          addDimensionToSelection();
+        } else {
+          // Toggle dimension mode
+          setDimensionMode(!isDimensionMode);
+        }
+        break;
         
       // Tool shortcuts
       case 'v':
       case 'V':
+        setDimensionMode(false);
         onStateChange({ ...sketchState, currentTool: 'select' });
         break;
       case 'l':
       case 'L':
+        setDimensionMode(false);
         onStateChange({ ...sketchState, currentTool: 'line' });
         break;
       case 'r':
       case 'R':
+        setDimensionMode(false);
         onStateChange({ ...sketchState, currentTool: 'rectangle' });
         break;
       case 'c':
       case 'C':
+        setDimensionMode(false);
         onStateChange({ ...sketchState, currentTool: 'circle' });
         break;
       case 'a':
       case 'A':
+        setDimensionMode(false);
         onStateChange({ ...sketchState, currentTool: 'arc' });
         break;
       case 'p':
       case 'P':
+        setDimensionMode(false);
         onStateChange({ ...sketchState, currentTool: 'polyline' });
         break;
     }
-  }, [sketchState, onStateChange]);
+  }, [sketchState, onStateChange, isDimensionMode, setDimensionMode, addDimensionToSelection]);
 
   // Attach event listeners
   useEffect(() => {
@@ -835,9 +912,79 @@ export function SketchCanvas({
   return (
     <div 
       ref={containerRef} 
-      className="w-full h-full"
+      className="w-full h-full relative"
       data-testid="sketch-canvas"
-    />
+    >
+      {/* Dimension Mode Indicator */}
+      {isDimensionMode && (
+        <div className="absolute top-2 left-1/2 -translate-x-1/2 bg-blue-500/90 text-white px-3 py-1.5 rounded-lg text-xs font-medium z-20 flex items-center gap-2">
+          <span className="material-symbols-outlined text-sm">straighten</span>
+          DIMENSION MODE - Click elements to add dimensions (Press D or Esc to exit)
+        </div>
+      )}
+      
+      {/* Dimension Labels Overlay */}
+      {constraints.length > 0 && (
+        <div className="absolute inset-0 pointer-events-none overflow-hidden z-10">
+          {constraints.map((constraint) => {
+            const element = sketchState.elements.find(e => e.id === constraint.entity1 || e.id === constraint.entity2);
+            if (!element) return null;
+            
+            // Calculate label position based on element and constraint type
+            let labelPosition = { x: 0, y: 0 };
+            
+            if (element.type === 'line' && element.points.length >= 2) {
+              const midX = (element.points[0].x + element.points[1].x) / 2;
+              const midY = (element.points[0].y + element.points[1].y) / 2;
+              // Convert to screen coordinates (approximate)
+              labelPosition = {
+                x: 50 + midX * 50, // Approximate conversion
+                y: 50 - midY * 50,
+              };
+            } else if ((element.type === 'circle' || element.type === 'arc') && element.center) {
+              labelPosition = {
+                x: 50 + element.center.x * 50 + 30,
+                y: 50 - element.center.y * 50 - 30,
+              };
+            }
+            
+            const isLength = constraint.type === 'distance';
+            const isRadius = constraint.type === 'radius';
+            
+            return (
+              <div
+                key={constraint.id}
+                className="absolute pointer-events-auto"
+                style={{
+                  left: `${labelPosition.x}%`,
+                  top: `${labelPosition.y}%`,
+                  transform: 'translate(-50%, -50%)',
+                }}
+              >
+                <div
+                  className="px-2 py-0.5 text-xs font-mono bg-blue-500/90 text-white rounded cursor-pointer hover:bg-blue-600 transition-colors"
+                  onDoubleClick={() => {
+                    const newValue = prompt(
+                      `Enter new ${constraint.type}:`,
+                      constraint.value.toFixed(2)
+                    );
+                    if (newValue && onConstraintUpdate) {
+                      const parsed = parseFloat(newValue);
+                      if (!isNaN(parsed) && parsed > 0) {
+                        onConstraintUpdate(constraint.id, parsed);
+                      }
+                    }
+                  }}
+                  title="Double-click to edit"
+                >
+                  {isRadius ? 'R' : ''}{constraint.value.toFixed(2)}{isLength ? ' mm' : ''}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 

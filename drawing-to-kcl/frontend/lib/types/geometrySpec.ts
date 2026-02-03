@@ -178,6 +178,43 @@ export interface DraftSpec {
   direction?: [number, number, number];
 }
 
+// Pipe (hollow tube along path)
+export interface PipeSpec {
+  id: string;
+  outerDiameter: number;
+  wallThickness: number;  // or use innerDiameter = outerDiameter - 2*wallThickness
+  path: [number, number, number][];
+  bendRadius?: number;  // for curved sections
+  segments?: number;
+}
+
+// Pipe Elbow (90-degree or custom angle bend)
+export interface PipeElbowSpec {
+  id: string;
+  outerDiameter: number;
+  wallThickness: number;
+  angle: number;  // degrees (typically 45, 90)
+  bendRadius: number;
+  center?: [number, number, number];
+  segments?: number;
+}
+
+// Thread (screw thread)
+export type ThreadType = 'external' | 'internal';
+export type ThreadHandedness = 'right' | 'left';
+
+export interface ThreadSpec {
+  id: string;
+  diameter: number;        // Major diameter (mm)
+  pitch: number;           // Thread pitch (mm)
+  length: number;          // Thread length (mm)
+  type: ThreadType;        // 'external' (bolt) or 'internal' (nut)
+  starts?: number;         // Number of thread starts (default: 1)
+  handedness?: ThreadHandedness;  // 'right' (default) or 'left'
+  center?: [number, number, number];  // Position
+  segments?: number;       // Helix segments per turn
+}
+
 export interface GeometrySpec {
   artifacts: string[];
   boxes: BoxSpec[];

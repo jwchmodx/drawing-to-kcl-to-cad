@@ -2,8 +2,25 @@
 
 import React, { useState, useCallback, useRef } from 'react';
 import { KclPreview3D, FaceSelection, KclPreview3DRef, ViewType } from '@/components/KclPreview3D';
-import { buildGeometrySpecFromKcl, exportToSTL, exportToSTLBinary, exportToSTEP } from '@/lib/geometryRuntime';
-import { buildArtifactGraphFromGeometry, extractMeshes } from '@/lib/types/artifactGraph';
+import { useDirectEdit, EditMode, Transform } from '@/hooks/useDirectEdit';
+import { DirectEditToolbar, SketchPlaneSelector, TransformInfo } from '@/components/TransformGizmo';
+import { generateTransformedKcl, updateExtrudeHeight } from '@/lib/kclGenerator';
+import { exportToSTL, exportToSTLBinary, exportToSTEP } from '@/lib/geometryRuntime';
+import { kclCodeToPreview, type PreviewResult } from '@/lib/kclToPreview';
+import { KCLErrorDisplay, ParseStatus, ErrorToast } from '@/components/KCLErrorDisplay';
+import dynamic from 'next/dynamic';
+
+// Monaco Editor는 SSR이 안 되므로 dynamic import
+const KCLCodeEditor = dynamic(() => import('@/components/KCLCodeEditor'), {
+  ssr: false,
+  loading: () => (
+    <div className="flex items-center justify-center h-full bg-void text-text-muted">
+      <span className="material-symbols-outlined animate-spin mr-2">progress_activity</span>
+      에디터 로딩 중...
+    </div>
+  ),
+});
+import type { KCLError } from '@/lib/kclErrorHandler';
 import { importSTLFile, meshToApproximateKCL, normalizeMesh } from '@/lib/stlImporter';
 import { SketchCanvas } from '@/components/SketchCanvas';
 import { SketchToolbar, SketchInfoPanel, SketchFinishDialog } from '@/components/SketchToolbar';
@@ -24,447 +41,20 @@ import { ShortcutHelp, ShortcutHelpButton } from '@/components/ShortcutHelp';
 import { MeasureToolbar, MeasureButton } from '@/components/MeasureToolbar';
 import { useMeasurement, MeasureClickInfo } from '@/lib/useMeasurement';
 import { MeasureMode, Measurement, MeasureUnit } from '@/lib/measureEngine';
+// Timeline and Feature History
+import { Timeline } from '@/components/Timeline';
+import { useFeatureHistory } from '@/hooks/useFeatureHistory';
+import { Feature, FeatureType } from '@/lib/featureHistory';
+// Dimensional Constraints
+import {
+  DimensionalConstraint,
+  solveConstraints,
+} from '@/lib/dimensionalConstraints';
 
-// KCL 코드를 프리뷰 데이터로 변환
-function kclCodeToPreview(kclCode: string) {
-  const spec = buildGeometrySpecFromKcl(kclCode);
-  const graph = buildArtifactGraphFromGeometry(spec);
-  const meshes = extractMeshes(graph);
-  return { 
-    meshes: meshes.map(m => ({ 
-      id: m.id, 
-      vertices: m.vertices as [number, number, number][], 
-      indices: m.indices 
-    })),
-    spec,
-    graph
-  };
-}
-
-// ═══════════════════════════════════════════════════════════════
-// ICON COMPONENT
-// ═══════════════════════════════════════════════════════════════
-function Icon({ name, className = '' }: { name: string; className?: string }) {
-  return (
-    <span className={`material-symbols-outlined ${className}`}>{name}</span>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════
-// EXPORT MODAL
-// ═══════════════════════════════════════════════════════════════
-interface ExportModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  onExport: (format: 'stl' | 'stl-binary' | 'step', filename: string) => void;
-}
-
-function ExportModal({ isOpen, onClose, onExport }: ExportModalProps) {
-  const [filename, setFilename] = useState('model');
-  const [format, setFormat] = useState<'stl' | 'stl-binary' | 'step'>('stl');
-
-  if (!isOpen) return null;
-
-  return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-      <div className="bg-surface border border-white/10 rounded-2xl p-6 w-96 shadow-2xl">
-        <h2 className="text-lg font-semibold text-text mb-4 flex items-center gap-2">
-          <Icon name="file_download" className="text-cyan" />
-          Export Model
-        </h2>
-        
-        <div className="space-y-4">
-          <div>
-            <label className="text-xs text-text-muted uppercase tracking-wider block mb-2">Filename</label>
-            <input
-              type="text"
-              value={filename}
-              onChange={(e) => setFilename(e.target.value)}
-              className="w-full bg-void border border-white/10 rounded-lg px-3 py-2 text-sm text-text focus:border-cyan/50 focus:outline-none"
-              placeholder="model"
-            />
-          </div>
-          
-          <div>
-            <label className="text-xs text-text-muted uppercase tracking-wider block mb-2">Format</label>
-            <div className="grid grid-cols-3 gap-2">
-              {[
-                { id: 'stl' as const, label: 'STL (ASCII)', icon: 'description' },
-                { id: 'stl-binary' as const, label: 'STL (Binary)', icon: 'file_present' },
-                { id: 'step' as const, label: 'STEP', icon: 'deployed_code' },
-              ].map((f) => (
-                <button
-                  key={f.id}
-                  onClick={() => setFormat(f.id)}
-                  className={`flex flex-col items-center gap-1 p-3 rounded-lg border transition-all ${
-                    format === f.id
-                      ? 'bg-cyan/10 border-cyan/50 text-cyan'
-                      : 'border-white/10 text-text-muted hover:border-white/20'
-                  }`}
-                >
-                  <Icon name={f.icon} className="text-xl" />
-                  <span className="text-[10px]">{f.label}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-        
-        <div className="flex gap-2 mt-6">
-          <button
-            onClick={onClose}
-            className="flex-1 px-4 py-2 text-sm text-text-muted hover:text-text bg-white/5 rounded-lg transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={() => {
-              onExport(format, filename || 'model');
-              onClose();
-            }}
-            className="flex-1 px-4 py-2 text-sm bg-cyan text-void font-medium rounded-lg hover:bg-cyan/90 transition-colors"
-          >
-            Export
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════
-// HEADER COMPONENT
-// ═══════════════════════════════════════════════════════════════
-interface HeaderProps {
-  onExportClick: () => void;
-}
-
-function Header({ onExportClick }: HeaderProps) {
-  const [activeMode, setActiveMode] = useState('design');
-
-  return (
-    <header className="flex items-center justify-between px-4 h-12 bg-surface border-b border-white/5 shrink-0 z-50">
-      {/* Left: Logo + Menu */}
-      <div className="flex items-center gap-6">
-        <div className="flex items-center gap-2.5">
-          <div className="relative size-7 flex items-center justify-center">
-            <div className="absolute inset-0 bg-cyan/20 rounded-md blur-sm" />
-          </div>
-          <span className="text-sm font-semibold tracking-tight text-text">FORGE</span>
-          <span className="text-[10px] font-medium text-cyan bg-cyan/10 px-1.5 py-0.5 rounded">BETA</span>
-        </div>
-
-        <div className="h-4 w-px bg-white/10" />
-
-        <nav className="flex items-center gap-1">
-          {['File', 'Edit', 'Model', 'Render', 'Help'].map((item) => (
-            <button
-              key={item}
-              className="px-2.5 py-1 text-xs font-medium text-text-muted hover:text-text hover:bg-white/5 rounded transition-colors"
-            >
-              {item}
-            </button>
-          ))}
-        </nav>
-      </div>
-
-      {/* Center: Mode Switcher */}
-      <div className="absolute left-1/2 -translate-x-1/2 flex items-center">
-        <div className="flex bg-void rounded-lg p-0.5 border border-white/5">
-          {[
-            { id: 'design', label: 'Design', icon: 'edit' },
-            { id: 'simulate', label: 'Simulate', icon: 'play_arrow' },
-            { id: 'render', label: 'Render', icon: 'photo_camera' },
-          ].map((mode) => (
-            <button
-              key={mode.id}
-              onClick={() => setActiveMode(mode.id)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
-                activeMode === mode.id
-                  ? 'bg-cyan text-void'
-                  : 'text-text-muted hover:text-text'
-              }`}
-            >
-              <Icon name={mode.icon} className="text-sm" />
-              {mode.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Right: Actions */}
-      <div className="flex items-center gap-3">
-        <button className="flex items-center gap-2 px-3 py-1.5 text-xs text-text-muted bg-void border border-white/5 rounded-lg hover:border-white/10 hover:text-text transition-all">
-          <Icon name="search" className="text-sm" />
-          <span>Search...</span>
-          <kbd className="ml-2 px-1.5 py-0.5 text-[10px] bg-white/5 rounded border border-white/10">⌘K</kbd>
-        </button>
-
-        <div className="h-4 w-px bg-white/10" />
-
-        <button 
-          onClick={onExportClick}
-          className="btn-primary flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs"
-        >
-          <Icon name="file_download" className="text-sm" />
-          Export
-        </button>
-
-        <div className="flex gap-1">
-          <button className="btn-ghost p-2 rounded-lg" aria-label="Settings">
-            <Icon name="settings" className="text-lg" />
-          </button>
-          <button className="btn-ghost p-2 rounded-lg" aria-label="Account">
-            <Icon name="account_circle" className="text-lg" />
-          </button>
-        </div>
-      </div>
-    </header>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════
-// SIDEBAR NAV COMPONENT
-// ═══════════════════════════════════════════════════════════════
-function SidebarNav() {
-  const [activeItem, setActiveItem] = useState('files');
-
-  const items = [
-    { id: 'home', icon: 'home' },
-    { id: 'files', icon: 'folder_open' },
-    { id: 'objects', icon: 'deployed_code' },
-    { id: 'layers', icon: 'layers' },
-    { id: 'materials', icon: 'palette' },
-  ];
-
-  const bottomItems = [
-    { id: 'extensions', icon: 'extension' },
-    { id: 'settings', icon: 'tune' },
-  ];
-
-  return (
-    <aside className="w-12 flex flex-col items-center py-3 gap-1 bg-surface border-r border-white/5 shrink-0">
-      {items.map((item) => (
-        <button
-          key={item.id}
-          onClick={() => setActiveItem(item.id)}
-          className={`p-2.5 rounded-lg transition-all ${
-            activeItem === item.id
-              ? 'bg-cyan/10 text-cyan'
-              : 'text-text-muted hover:text-text hover:bg-white/5'
-          }`}
-        >
-          <Icon name={item.icon} className="text-xl" />
-        </button>
-      ))}
-
-      <div className="flex-1" />
-
-      {bottomItems.map((item) => (
-        <button
-          key={item.id}
-          className="p-2.5 text-text-muted hover:text-text hover:bg-white/5 rounded-lg transition-all"
-        >
-          <Icon name={item.icon} className="text-xl" />
-        </button>
-      ))}
-    </aside>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════
-// FILE TREE COMPONENT
-// ═══════════════════════════════════════════════════════════════
-interface ImportedFile {
-  name: string;
-  type: 'stl' | 'kcl';
-  data: {
-    vertices?: [number, number, number][];
-    indices?: number[];
-    kclCode?: string;
-  };
-}
-
-interface FileTreeProps {
-  importedFiles: ImportedFile[];
-  onFileImport: (file: File) => void;
-  onFileSelect: (file: ImportedFile) => void;
-  selectedFile: ImportedFile | null;
-}
-
-function FileTree({ importedFiles, onFileImport, onFileSelect, selectedFile }: FileTreeProps) {
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({
-    'chair': true,
-    'meshes': true,
-    'imported': true,
-  });
-  const [isDragging, setIsDragging] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const toggleExpand = (id: string) => {
-    setExpanded(prev => ({ ...prev, [id]: !prev[id] }));
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-    const files = Array.from(e.dataTransfer.files);
-    files.forEach(file => {
-      if (file.name.endsWith('.stl') || file.name.endsWith('.kcl')) {
-        onFileImport(file);
-      }
-    });
-  };
-
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-  };
-
-  const handleDragLeave = () => {
-    setIsDragging(false);
-  };
-
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (files) {
-      Array.from(files).forEach(file => onFileImport(file));
-    }
-  };
-
-  return (
-    <aside 
-      className={`w-60 flex flex-col bg-surface border-r border-white/5 shrink-0 ${isDragging ? 'ring-2 ring-cyan ring-inset' : ''}`}
-      onDrop={handleDrop}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-    >
-      <div className="panel-header px-4 py-3 flex items-center justify-between">
-        <span className="text-xs font-semibold text-text-muted uppercase tracking-wider">Explorer</span>
-        <div className="flex gap-1">
-          <button 
-            onClick={() => fileInputRef.current?.click()}
-            className="btn-ghost p-1 rounded hover:bg-cyan/20 hover:text-cyan"
-            title="Import STL/KCL"
-          >
-            <Icon name="upload_file" className="text-base" />
-          </button>
-          <button className="btn-ghost p-1 rounded">
-            <Icon name="more_horiz" className="text-base" />
-          </button>
-        </div>
-        <input 
-          ref={fileInputRef}
-          type="file" 
-          accept=".stl,.kcl" 
-          multiple 
-          className="hidden" 
-          onChange={handleFileSelect}
-        />
-      </div>
-
-      <div className="flex-1 overflow-y-auto px-2 py-2">
-        <div className="space-y-0.5">
-          <button
-            onClick={() => toggleExpand('chair')}
-            className="tree-item flex items-center gap-2 w-full px-2 py-1.5 rounded-md"
-          >
-            <Icon name={expanded['chair'] ? 'keyboard_arrow_down' : 'keyboard_arrow_right'} className="text-base text-text-dim" />
-            <Icon name="inventory_2" className="text-base text-cyan" />
-            <span className="text-[13px] text-text">Chair_v2</span>
-          </button>
-
-          {expanded['chair'] && (
-            <div className="ml-4 border-l border-white/5 pl-2">
-              <button
-                onClick={() => toggleExpand('meshes')}
-                className="tree-item flex items-center gap-2 w-full px-2 py-1.5 rounded-md"
-              >
-                <Icon name={expanded['meshes'] ? 'keyboard_arrow_down' : 'keyboard_arrow_right'} className="text-base text-text-dim" />
-                <Icon name="polyline" className="text-base text-orange" />
-                <span className="text-[13px] text-text-muted">Meshes</span>
-              </button>
-
-              {expanded['meshes'] && (
-                <div className="ml-4 border-l border-white/5 pl-2">
-                  {['Seat_Base', 'Back_Support', 'Armrest_L', 'Armrest_R'].map((mesh, i) => (
-                    <button
-                      key={mesh}
-                      className={`tree-item flex items-center gap-2 w-full px-2 py-1.5 rounded-md ${i === 0 ? 'active' : ''}`}
-                    >
-                      <Icon name="view_in_ar" className="text-base text-green" />
-                      <span className="text-[13px] text-text-muted">{mesh}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              <button className="tree-item flex items-center gap-2 w-full px-2 py-1.5 rounded-md">
-                <Icon name="keyboard_arrow_right" className="text-base text-text-dim" />
-                <Icon name="texture" className="text-base text-cyan-dim" />
-                <span className="text-[13px] text-text-muted">Materials</span>
-              </button>
-              <button className="tree-item flex items-center gap-2 w-full px-2 py-1.5 rounded-md">
-                <Icon name="keyboard_arrow_right" className="text-base text-text-dim" />
-                <Icon name="lightbulb" className="text-base text-orange" />
-                <span className="text-[13px] text-text-muted">Lights</span>
-              </button>
-            </div>
-          )}
-
-          {/* Imported Files Section */}
-          {importedFiles.length > 0 && (
-            <>
-              <button
-                onClick={() => toggleExpand('imported')}
-                className="tree-item flex items-center gap-2 w-full px-2 py-1.5 rounded-md mt-2"
-              >
-                <Icon name={expanded['imported'] ? 'keyboard_arrow_down' : 'keyboard_arrow_right'} className="text-base text-text-dim" />
-                <Icon name="cloud_upload" className="text-base text-green" />
-                <span className="text-[13px] text-text">Imported ({importedFiles.length})</span>
-              </button>
-
-              {expanded['imported'] && (
-                <div className="ml-4 border-l border-white/5 pl-2">
-                  {importedFiles.map((file, i) => (
-                    <button
-                      key={`${file.name}-${i}`}
-                      onClick={() => onFileSelect(file)}
-                      className={`tree-item flex items-center gap-2 w-full px-2 py-1.5 rounded-md ${
-                        selectedFile?.name === file.name ? 'active bg-cyan/10' : ''
-                      }`}
-                    >
-                      <Icon 
-                        name={file.type === 'stl' ? 'view_in_ar' : 'code'} 
-                        className={`text-base ${file.type === 'stl' ? 'text-orange' : 'text-cyan'}`} 
-                      />
-                      <span className="text-[13px] text-text-muted truncate">{file.name}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </>
-          )}
-
-          {/* Drop Zone Hint */}
-          {isDragging && (
-            <div className="mt-4 p-4 border-2 border-dashed border-cyan/50 rounded-lg text-center">
-              <Icon name="cloud_upload" className="text-2xl text-cyan mb-2" />
-              <p className="text-xs text-cyan">Drop STL/KCL files here</p>
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div className="px-4 py-3 border-t border-white/5">
-        <div className="flex items-center justify-between text-[10px] text-text-dim">
-          <span className="uppercase tracking-wider">Memory</span>
-          <span className="font-mono text-cyan">2.4 / 8 GB</span>
-        </div>
-      </div>
-    </aside>
-  );
-}
+import { Header, SidebarNav } from '@/components/layout';
+import { ExportModal } from '@/components/modals';
+import { FileTree, type ImportedFile } from '@/components/panels';
+import { Icon } from '@/components/ui/Icon';
 
 // ═══════════════════════════════════════════════════════════════
 // VIEWPORT COMPONENT
@@ -475,15 +65,45 @@ interface ViewportProps {
   onSketchComplete?: (kclCode: string) => void;
   preview3DRef?: React.RefObject<KclPreview3DRef>;
   currentView?: ViewType;
+  onTransformApply?: (meshId: string, transform: Transform) => void;
+  onPushPullApply?: (meshId: string, heightDelta: number) => void;
+  // Dimensional constraints
+  dimensionalConstraints?: DimensionalConstraint[];
+  onConstraintAdd?: (constraint: DimensionalConstraint) => void;
+  onConstraintUpdate?: (constraintId: string, value: number) => void;
+  onConstraintDelete?: (constraintId: string) => void;
+  dimensionMode?: boolean;
+  onDimensionModeChange?: (active: boolean) => void;
 }
 
-function Viewport({ preview, onApplyOperation, onSketchComplete, preview3DRef, currentView }: ViewportProps) {
+function Viewport({ 
+  preview, 
+  onApplyOperation, 
+  onSketchComplete, 
+  preview3DRef, 
+  currentView, 
+  onTransformApply, 
+  onPushPullApply,
+  dimensionalConstraints = [],
+  onConstraintAdd,
+  onConstraintUpdate,
+  onConstraintDelete,
+  dimensionMode = false,
+  onDimensionModeChange,
+}: ViewportProps) {
   const [activeTool, setActiveTool] = useState('select');
   const [editMode, setEditMode] = useState(false);
   const [selectedFace, setSelectedFace] = useState<FaceSelection | null>(null);
   const [extrudeDistance, setExtrudeDistance] = useState(1);
   const [filletRadius, setFilletRadius] = useState(0.2);
   const hasPreview = preview && preview.meshes && preview.meshes.length > 0;
+  
+  // Direct Edit State
+  const directEdit = useDirectEdit();
+  const [gizmoSpace, setGizmoSpace] = useState<'local' | 'world'>('world');
+  const [gizmoSnap, setGizmoSnap] = useState(false);
+  const [selectedMeshId, setSelectedMeshId] = useState<string | null>(null);
+  const [pushPullPreviewDelta, setPushPullPreviewDelta] = useState(0);
 
   // Sketch Mode State
   const [isSketchMode, setIsSketchMode] = useState(false);
@@ -495,6 +115,9 @@ function Viewport({ preview, onApplyOperation, onSketchComplete, preview3DRef, c
   // Measurement State
   const measurement = useMeasurement();
   const [showMeasurePanel, setShowMeasurePanel] = useState(false);
+
+  // Section panel visibility (단면 보기)
+  const [showSectionPanel, setShowSectionPanel] = useState(true);
 
   const tools = [
     { id: 'select', icon: 'near_me', label: 'Select (View Mode)' },
@@ -528,7 +151,101 @@ function Viewport({ preview, onApplyOperation, onSketchComplete, preview3DRef, c
 
   const handleFaceSelect = useCallback((selection: FaceSelection | null) => {
     setSelectedFace(selection);
-  }, []);
+    if (selection?.meshId) {
+      setSelectedMeshId(selection.meshId);
+      directEdit.selectObject(selection.meshId, 0);
+    }
+  }, [directEdit]);
+
+  // Direct edit mode change handler
+  const handleDirectEditModeChange = useCallback((mode: EditMode) => {
+    directEdit.setMode(mode);
+    if (mode !== 'select') {
+      setEditMode(true);
+    }
+  }, [directEdit]);
+
+  // Transform change handler
+  const handleTransformChange = useCallback((transform: Transform) => {
+    directEdit.updateTransform(transform);
+  }, [directEdit]);
+
+  // Transform end handler - apply to KCL
+  const handleTransformEnd = useCallback((transform: Transform) => {
+    if (selectedMeshId && onTransformApply) {
+      onTransformApply(selectedMeshId, transform);
+    }
+  }, [selectedMeshId, onTransformApply]);
+
+  // Push/Pull handlers
+  const handlePushPullDrag = useCallback((delta: number) => {
+    setPushPullPreviewDelta(delta);
+    directEdit.updatePushPull(delta);
+  }, [directEdit]);
+
+  const handlePushPullEnd = useCallback((delta: number) => {
+    if (selectedMeshId && onPushPullApply) {
+      onPushPullApply(selectedMeshId, delta);
+    }
+    setPushPullPreviewDelta(0);
+    directEdit.endPushPull();
+  }, [selectedMeshId, onPushPullApply, directEdit]);
+
+  // Apply transform and reset
+  const handleApplyTransform = useCallback(() => {
+    if (directEdit.state.selectedObject && onTransformApply) {
+      onTransformApply(
+        directEdit.state.selectedObject.meshId,
+        directEdit.state.selectedObject.currentTransform
+      );
+    }
+    directEdit.clearSelection();
+    setSelectedMeshId(null);
+  }, [directEdit, onTransformApply]);
+
+  // Cancel transform
+  const handleCancelTransform = useCallback(() => {
+    directEdit.resetTransform();
+    directEdit.clearSelection();
+    setSelectedMeshId(null);
+  }, [directEdit]);
+
+  // Keyboard shortcuts for direct edit
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!editMode || !hasPreview) return;
+      
+      // Don't trigger when typing in inputs
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      
+      switch (e.key.toLowerCase()) {
+        case 'g':
+          e.preventDefault();
+          handleDirectEditModeChange('translate');
+          break;
+        case 'r':
+          e.preventDefault();
+          handleDirectEditModeChange('rotate');
+          break;
+        case 's':
+          e.preventDefault();
+          handleDirectEditModeChange('scale');
+          break;
+        case 'p':
+          e.preventDefault();
+          handleDirectEditModeChange('pushpull');
+          break;
+        case 'escape':
+          e.preventDefault();
+          handleCancelTransform();
+          handleDirectEditModeChange('select');
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [editMode, hasPreview, handleDirectEditModeChange, handleCancelTransform]);
 
   const handleApplyExtrude = useCallback(() => {
     if (selectedFace && onApplyOperation) {
@@ -793,6 +510,53 @@ function Viewport({ preview, onApplyOperation, onSketchComplete, preview3DRef, c
         </div>
       )}
 
+      {/* Direct Edit Toolbar */}
+      {editMode && !isSketchMode && (
+        <div className="absolute top-20 left-1/2 -translate-x-1/2 z-20">
+          <DirectEditToolbar
+            mode={directEdit.state.mode}
+            onModeChange={handleDirectEditModeChange}
+            space={gizmoSpace}
+            onSpaceChange={setGizmoSpace}
+            snapEnabled={gizmoSnap}
+            onSnapChange={setGizmoSnap}
+            onApply={handleApplyTransform}
+            onCancel={handleCancelTransform}
+            hasSelection={selectedMeshId !== null}
+          />
+        </div>
+      )}
+
+      {/* Transform Info Panel */}
+      {editMode && !isSketchMode && directEdit.state.selectedObject && (
+        <div className="absolute top-20 left-4 z-10">
+          <TransformInfo
+            position={directEdit.state.selectedObject.currentTransform.position}
+            rotation={directEdit.state.selectedObject.currentTransform.rotation}
+            scale={directEdit.state.selectedObject.currentTransform.scale}
+          />
+        </div>
+      )}
+
+      {/* Push/Pull Preview */}
+      {directEdit.state.mode === 'pushpull' && pushPullPreviewDelta !== 0 && (
+        <div className="absolute bottom-20 left-1/2 -translate-x-1/2 z-10 px-4 py-2 bg-surface/95 border border-cyan/30 rounded-lg">
+          <span className="text-xs text-cyan font-mono">
+            Push/Pull: {pushPullPreviewDelta > 0 ? '+' : ''}{pushPullPreviewDelta.toFixed(2)}
+          </span>
+        </div>
+      )}
+
+      {/* Sketch Plane Selector */}
+      {editMode && !isSketchMode && directEdit.state.mode === 'pushpull' && !selectedFace && (
+        <div className="absolute bottom-20 right-4 z-10">
+          <SketchPlaneSelector
+            selectedPlane={directEdit.state.sketchPlane?.type ?? null}
+            onSelectPlane={(plane) => directEdit.setSketchPlaneFromType(plane)}
+          />
+        </div>
+      )}
+
       {/* Edit Mode Indicator */}
       {editMode && !isSketchMode && (
         <div className="absolute top-4 left-4 bg-orange/20 border border-orange/30 rounded-lg px-3 py-1.5 z-10">
@@ -850,20 +614,42 @@ function Viewport({ preview, onApplyOperation, onSketchComplete, preview3DRef, c
               sketchState={sketchState}
               onStateChange={setSketchState}
               onCursorMove={setCursorPosition}
+              constraints={dimensionalConstraints}
+              onConstraintAdd={onConstraintAdd}
+              onConstraintUpdate={onConstraintUpdate}
+              onConstraintDelete={onConstraintDelete}
+              dimensionMode={dimensionMode}
+              onDimensionModeChange={onDimensionModeChange}
             />
             <SketchInfoPanel
               sketchState={sketchState}
               cursorPosition={cursorPosition}
             />
+            {/* Dimension Mode Info */}
+            {dimensionMode && (
+              <div className="absolute top-2 right-4 bg-blue-500/90 text-white px-3 py-1.5 rounded-lg text-xs font-medium z-20">
+                Press D to add dimension to selected element
+              </div>
+            )}
           </div>
         ) : hasPreview ? (
           <div className="w-full h-full">
-            <KclPreview3D 
+            <KclPreview3D
               ref={preview3DRef}
-              preview={preview} 
+              preview={preview}
               editMode={editMode}
               selectedFace={selectedFace}
               onFaceSelect={handleFaceSelect}
+              directEditMode={directEdit.state.mode}
+              showGizmo={directEdit.state.showGizmo}
+              selectedMeshId={selectedMeshId}
+              onTransformChange={handleTransformChange}
+              onTransformEnd={handleTransformEnd}
+              onPushPullDrag={handlePushPullDrag}
+              onPushPullEnd={handlePushPullEnd}
+              onMeshSelect={setSelectedMeshId}
+              showSectionControls={showSectionPanel}
+              onSectionPanelClose={() => setShowSectionPanel(false)}
             />
           </div>
         ) : (
@@ -895,6 +681,15 @@ function Viewport({ preview, onApplyOperation, onSketchComplete, preview3DRef, c
         {/* Camera Controls */}
         {!isSketchMode && (
           <div className="absolute bottom-4 right-4 flex flex-col gap-1">
+            {!showSectionPanel && (
+              <button
+                onClick={() => setShowSectionPanel(true)}
+                className="p-2 bg-surface/90 backdrop-blur-sm border border-white/5 rounded-lg text-text-muted hover:text-text hover:border-cyan/30 transition-colors"
+                title="단면 보기 패널 표시"
+              >
+                <Icon name="view_agenda" className="text-lg" />
+              </button>
+            )}
             <button className="p-2 bg-surface/90 backdrop-blur-sm border border-white/5 rounded-lg text-text-muted hover:text-text transition-colors">
               <Icon name="add" className="text-lg" />
             </button>
@@ -963,13 +758,17 @@ interface Message {
 interface ChatPanelProps {
   onSubmitCode: (code: string) => void;
   kclCode: string;
+  onValidate?: (errors: KCLError[], warnings: KCLError[]) => void;
 }
 
-function ChatPanel({ onSubmitCode, kclCode }: ChatPanelProps) {
+function ChatPanel({ onSubmitCode, kclCode, onValidate }: ChatPanelProps) {
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [mode, setMode] = useState<'ai' | 'code'>('ai');
+  const [mode, setMode] = useState<'ai' | 'code'>('code'); // 기본 코드 모드
+  const [editorCode, setEditorCode] = useState('// KCL 코드를 입력하세요\n// Ctrl+Enter로 실행\n\nlet myBox = box(50, 30, 20)\n');
+  const [editorErrors, setEditorErrors] = useState<KCLError[]>([]);
+  const [editorWarnings, setEditorWarnings] = useState<KCLError[]>([]);
 
   const handleSubmit = async () => {
     if (!message.trim() || isLoading) return;
@@ -1056,115 +855,164 @@ function ChatPanel({ onSubmitCode, kclCode }: ChatPanelProps) {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
-        {messages.length === 0 ? (
-          <div className="flex-1 flex flex-col items-center justify-center text-center">
-            <Icon name={mode === 'ai' ? 'auto_awesome' : 'terminal'} className="text-4xl text-text-dim mb-3" />
-            <p className="text-sm text-text-muted">
-              {mode === 'ai' ? '만들고 싶은 3D 모델을 설명하세요' : 'KCL 코드를 입력하세요'}
-            </p>
-            <p className="text-xs text-text-dim mt-2">
-              {mode === 'ai' 
-                ? '예: "간단한 테이블 만들어줘"' 
-                : '예: let box1 = box(size: [2, 1, 1], center: [0, 0, 0])'}
-            </p>
+      {/* 코드 모드: Monaco Editor */}
+      {mode === 'code' && (
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <div className="flex-1 relative">
+            <KCLCodeEditor
+              value={editorCode}
+              onChange={setEditorCode}
+              onValidate={(errors, warnings) => {
+                setEditorErrors(errors);
+                setEditorWarnings(warnings);
+                onValidate?.(errors, warnings);
+              }}
+              onRun={(code) => onSubmitCode(code)}
+            />
           </div>
-        ) : (
-          messages.map((msg, i) => (
-            <div
-              key={i}
-              className="animate-fade-in-up flex flex-col gap-2"
-              style={{ animationDelay: `${i * 50}ms` }}
+          
+          {/* 에러 요약 */}
+          {(editorErrors.length > 0 || editorWarnings.length > 0) && (
+            <div className="border-t border-white/5 bg-surface/50 px-3 py-2 max-h-32 overflow-y-auto">
+              {editorErrors.map((err, i) => (
+                <div key={`err-${i}`} className="flex items-start gap-2 text-xs py-1">
+                  <span className="text-red-400">●</span>
+                  <span className="text-red-400">Line {err.line}:</span>
+                  <span className="text-text-muted flex-1">{err.message}</span>
+                </div>
+              ))}
+              {editorWarnings.map((warn, i) => (
+                <div key={`warn-${i}`} className="flex items-start gap-2 text-xs py-1">
+                  <span className="text-yellow-400">●</span>
+                  <span className="text-yellow-400">Line {warn.line}:</span>
+                  <span className="text-text-muted flex-1">{warn.message}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          
+          {/* 실행 버튼 */}
+          <div className="border-t border-white/5 p-3 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              {editorErrors.length === 0 ? (
+                <span className="flex items-center gap-1 text-green-400 text-xs">
+                  <Icon name="check_circle" className="text-sm" /> 유효한 코드
+                </span>
+              ) : (
+                <span className="flex items-center gap-1 text-red-400 text-xs">
+                  <Icon name="error" className="text-sm" /> {editorErrors.length}개 오류
+                </span>
+              )}
+            </div>
+            <button
+              onClick={() => onSubmitCode(editorCode)}
+              disabled={editorErrors.length > 0}
+              className="btn-primary px-4 py-2 rounded-lg text-xs font-medium flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {msg.type === 'user' && (
-                <div className="message-user rounded-2xl rounded-tr-md px-4 py-3">
-                  <p className="text-[13px] text-text">{msg.content}</p>
-                </div>
-              )}
-              {msg.type === 'ai' && (
-                <div className="message-ai rounded-2xl rounded-tl-md px-4 py-3">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Icon name="smart_toy" className="text-sm text-cyan" />
-                    <span className="text-[10px] text-text-muted uppercase">AI Generated</span>
-                  </div>
-                  <pre className="text-[12px] text-cyan font-mono whitespace-pre-wrap overflow-x-auto">{msg.content}</pre>
-                </div>
-              )}
-              {msg.type === 'system' && (
-                <div className="px-4 py-2 bg-red/10 border border-red/20 rounded-lg">
-                  <p className="text-[12px] text-red">{msg.content}</p>
-                </div>
-              )}
-              <span className="text-[10px] text-text-dim font-mono self-end">{msg.time}</span>
-            </div>
-          ))
-        )}
-
-        {isLoading && (
-          <div className="flex items-center gap-2 px-4 py-3 bg-surface rounded-2xl">
-            <div className="flex gap-1">
-              <div className="w-2 h-2 bg-cyan rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-              <div className="w-2 h-2 bg-cyan rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-              <div className="w-2 h-2 bg-cyan rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-            </div>
-            <span className="text-[12px] text-text-muted">KCL 코드 생성 중...</span>
-          </div>
-        )}
-
-        {kclCode && messages.length > 0 && !isLoading && (
-          <div className="flex justify-center">
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-green/10 border border-green/20 rounded-full">
-              <Icon name="check_circle" className="text-sm text-green" />
-              <span className="text-[11px] text-green font-medium">3D 프리뷰 생성됨</span>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {kclCode && (
-        <div className="px-4 py-2 border-t border-white/5 bg-void/50">
-          <div className="text-[10px] text-text-dim uppercase tracking-wider mb-1">Current Code</div>
-          <pre className="text-[11px] text-cyan font-mono bg-black/30 p-2 rounded overflow-x-auto max-h-20 overflow-y-auto">{kclCode}</pre>
-        </div>
-      )}
-
-      <div className="p-4 border-t border-white/5 shrink-0">
-        <div className="relative">
-          <textarea
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            onKeyDown={handleKeyDown}
-            disabled={isLoading}
-            className="command-input w-full rounded-xl px-4 py-3 pr-12 text-[13px] text-text placeholder:text-text-dim resize-none h-28 disabled:opacity-50"
-            placeholder={mode === 'ai' 
-              ? '"간단한 의자 만들어줘" 또는 "테이블과 의자"' 
-              : 'let myBox = box(size: [1, 2, 3], center: [0, 0, 0])'}
-          />
-          <div className="absolute bottom-3 right-3">
-            <button 
-              className="btn-primary p-2 rounded-lg disabled:opacity-50" 
-              aria-label={mode === 'ai' ? 'Generate' : 'Run'}
-              onClick={handleSubmit}
-              disabled={isLoading || !message.trim()}
-            >
-              <Icon name={mode === 'ai' ? 'auto_awesome' : 'play_arrow'} className="text-lg" />
+              <Icon name="play_arrow" className="text-base" />
+              실행
             </button>
           </div>
         </div>
+      )}
 
-        <div className="flex items-center justify-between mt-3">
-          <div className="flex items-center gap-2">
-            <div className="size-1.5 rounded-full bg-cyan animate-pulse-glow" />
-            <span className="text-[10px] font-mono text-text-dim">kcl-runtime</span>
+      {/* AI 모드: 채팅 UI */}
+      {mode === 'ai' && (
+        <>
+          <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
+            {messages.length === 0 ? (
+              <div className="flex-1 flex flex-col items-center justify-center text-center">
+                <Icon name="auto_awesome" className="text-4xl text-text-dim mb-3" />
+                <p className="text-sm text-text-muted">만들고 싶은 3D 모델을 설명하세요</p>
+                <p className="text-xs text-text-dim mt-2">예: "간단한 테이블 만들어줘"</p>
+              </div>
+            ) : (
+              messages.map((msg, i) => (
+                <div
+                  key={i}
+                  className="animate-fade-in-up flex flex-col gap-2"
+                  style={{ animationDelay: `${i * 50}ms` }}
+                >
+                  {msg.type === 'user' && (
+                    <div className="message-user rounded-2xl rounded-tr-md px-4 py-3">
+                      <p className="text-[13px] text-text">{msg.content}</p>
+                    </div>
+                  )}
+                  {msg.type === 'ai' && (
+                    <div className="message-ai rounded-2xl rounded-tl-md px-4 py-3">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Icon name="smart_toy" className="text-sm text-cyan" />
+                        <span className="text-[10px] text-text-muted uppercase">AI Generated</span>
+                      </div>
+                      <pre className="text-[12px] text-cyan font-mono whitespace-pre-wrap overflow-x-auto">{msg.content}</pre>
+                      <button
+                        onClick={() => {
+                          setEditorCode(msg.content);
+                          setMode('code');
+                        }}
+                        className="mt-2 text-xs text-text-muted hover:text-cyan flex items-center gap-1"
+                      >
+                        <Icon name="edit" className="text-sm" />
+                        에디터에서 편집
+                      </button>
+                    </div>
+                  )}
+                  {msg.type === 'system' && (
+                    <div className="px-4 py-2 bg-red/10 border border-red/20 rounded-lg">
+                      <p className="text-[12px] text-red">{msg.content}</p>
+                    </div>
+                  )}
+                  <span className="text-[10px] text-text-dim font-mono self-end">{msg.time}</span>
+                </div>
+              ))
+            )}
+
+            {isLoading && (
+              <div className="flex items-center gap-2 px-4 py-3 bg-surface rounded-2xl">
+                <div className="flex gap-1">
+                  <div className="w-2 h-2 bg-cyan rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                  <div className="w-2 h-2 bg-cyan rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                  <div className="w-2 h-2 bg-cyan rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                </div>
+                <span className="text-[12px] text-text-muted">KCL 코드 생성 중...</span>
+              </div>
+            )}
           </div>
-          <div className="flex items-center gap-1 text-[10px] text-text-dim">
-            <kbd className="px-1.5 py-0.5 bg-white/5 rounded border border-white/10">⌘</kbd>
-            <span>+</span>
-            <kbd className="px-1.5 py-0.5 bg-white/5 rounded border border-white/10">Enter</kbd>
-            <span className="ml-1">to run</span>
+
+          <div className="p-4 border-t border-white/5 shrink-0">
+            <div className="relative">
+              <textarea
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                onKeyDown={handleKeyDown}
+                disabled={isLoading}
+                className="command-input w-full rounded-xl px-4 py-3 pr-12 text-[13px] text-text placeholder:text-text-dim resize-none h-24 disabled:opacity-50"
+                placeholder='"간단한 의자 만들어줘" 또는 "테이블과 의자"'
+              />
+              <div className="absolute bottom-3 right-3">
+                <button 
+                  className="btn-primary p-2 rounded-lg disabled:opacity-50" 
+                  aria-label="Generate"
+                  onClick={handleSubmit}
+                  disabled={isLoading || !message.trim()}
+                >
+                  <Icon name="auto_awesome" className="text-lg" />
+                </button>
+              </div>
+            </div>
+            <div className="flex items-center justify-between mt-2">
+              <div className="flex items-center gap-2">
+              </div>
+              <div className="flex items-center gap-1 text-[10px] text-text-dim">
+                <kbd className="px-1.5 py-0.5 bg-white/5 rounded border border-white/10">⌘</kbd>
+                <span>+</span>
+                <kbd className="px-1.5 py-0.5 bg-white/5 rounded border border-white/10">Enter</kbd>
+                <span className="ml-1">to run</span>
+              </div>
+            </div>
           </div>
-        </div>
-      </div>
+        </>
+      )}
     </aside>
   );
 }
@@ -1177,7 +1025,12 @@ export default function Page() {
   const [preview, setPreview] = useState<{ meshes: { id?: string | null; vertices: [number, number, number][]; indices: number[] }[] } | null>(null);
   const [operationCount, setOperationCount] = useState(0);
   const [showExportModal, setShowExportModal] = useState(false);
-  const previewDataRef = useRef<ReturnType<typeof kclCodeToPreview> | null>(null);
+  const previewDataRef = useRef<PreviewResult | null>(null);
+  
+  // 에러 상태
+  const [parseErrors, setParseErrors] = useState<KCLError[]>([]);
+  const [parseWarnings, setParseWarnings] = useState<KCLError[]>([]);
+  const [showErrors, setShowErrors] = useState(true);
   const [importedFiles, setImportedFiles] = useState<ImportedFile[]>([]);
   const [selectedImportedFile, setSelectedImportedFile] = useState<ImportedFile | null>(null);
   const [historyPanelCollapsed, setHistoryPanelCollapsed] = useState(false);
@@ -1187,6 +1040,25 @@ export default function Page() {
   const preview3DRef = useRef<KclPreview3DRef>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [currentView, setCurrentView] = useState<ViewType>('perspective');
+  
+  // Feature History (Timeline)
+  const featureHistory = useFeatureHistory({
+    onKCLChange: useCallback((kcl: string) => {
+      // When feature timeline changes, update the preview
+      setKclCode(kcl);
+      try {
+        const newPreview = kclCodeToPreview(kcl);
+        previewDataRef.current = newPreview;
+        setPreview({ meshes: newPreview.meshes });
+      } catch (error) {
+        console.error('KCL parsing error on feature change:', error);
+      }
+    }, []),
+  });
+  
+  // Dimensional Constraints
+  const [dimensionalConstraints, setDimensionalConstraints] = useState<DimensionalConstraint[]>([]);
+  const [dimensionMode, setDimensionMode] = useState(false);
 
   // History hook - handles undo/redo state and keyboard shortcuts
   const history = useHistory({
@@ -1358,15 +1230,52 @@ export default function Page() {
 
   const handleSubmitCode = useCallback((code: string, label?: string) => {
     updateKclCodeWithHistory(code, label || 'AI Generated Code');
-    try {
-      const newPreview = kclCodeToPreview(code);
-      previewDataRef.current = newPreview;
-      setPreview({ meshes: newPreview.meshes });
-    } catch (error) {
-      console.error('KCL parsing error:', error);
+    
+    // 에러 처리가 포함된 파싱
+    const result = kclCodeToPreview(code);
+    previewDataRef.current = result;
+    
+    // 에러/경고 상태 업데이트
+    setParseErrors(result.errors);
+    setParseWarnings(result.warnings);
+    setShowErrors(result.errors.length > 0 || result.warnings.length > 0);
+    
+    if (result.success) {
+      setPreview({ meshes: result.meshes });
+      console.log(`✅ KCL 파싱 성공: ${result.meshes.length}개 메시 생성`);
+    } else {
       setPreview(null);
+      console.error('❌ KCL 파싱 실패:', result.errors.map(e => e.message).join(', '));
     }
   }, [updateKclCodeWithHistory]);
+
+  // Handle transform apply from direct edit
+  const handleTransformApply = useCallback((meshId: string, transform: Transform) => {
+    if (!kclCode) return;
+    
+    // Calculate delta from default transform
+    const delta = {
+      position: transform.position,
+      rotation: transform.rotation,
+      scale: transform.scale,
+    };
+    
+    const newCode = generateTransformedKcl(kclCode, delta);
+    handleSubmitCode(newCode, `Transform ${meshId}`);
+  }, [kclCode, handleSubmitCode]);
+
+  // Handle push/pull apply from direct edit
+  const handlePushPullApply = useCallback((meshId: string, heightDelta: number) => {
+    if (!kclCode) return;
+    
+    // For now, we'll update the extrude height in the code
+    // This is a simplified version - in production you'd need to identify the specific extrude
+    const extrudeMatch = kclCode.match(/extrude\s*\([^)]+,\s*distance\s*:\s*([-\d.e]+)\s*\)/);
+    if (extrudeMatch) {
+      const newCode = updateExtrudeHeight(kclCode, heightDelta);
+      handleSubmitCode(newCode, `Push/Pull ${heightDelta > 0 ? '+' : ''}${heightDelta.toFixed(2)}`);
+    }
+  }, [kclCode, handleSubmitCode]);
 
   const handleApplyOperation = useCallback((operation: string, params: Record<string, number | string>) => {
     if (operation === 'extrude') {
@@ -1466,6 +1375,29 @@ export default function Page() {
     }
   }, [handleSubmitCode]);
 
+  // Handle constraint changes
+  const handleConstraintAdd = useCallback((constraint: DimensionalConstraint) => {
+    setDimensionalConstraints(prev => [...prev, constraint]);
+  }, []);
+  
+  const handleConstraintUpdate = useCallback((constraintId: string, value: number) => {
+    setDimensionalConstraints(prev => 
+      prev.map(c => c.id === constraintId ? { ...c, value } : c)
+    );
+    // TODO: Solve constraints and update geometry
+  }, []);
+  
+  const handleConstraintDelete = useCallback((constraintId: string) => {
+    setDimensionalConstraints(prev => prev.filter(c => c.id !== constraintId));
+  }, []);
+
+  // Handle sketch complete with feature history
+  const handleSketchCompleteWithHistory = useCallback((code: string) => {
+    handleSubmitCode(code, 'Sketch Complete');
+    // Add to feature history
+    featureHistory.addFromKCL(code, 'New Sketch');
+  }, [handleSubmitCode, featureHistory]);
+
   return (
     <>
       {/* Hidden file input for Open shortcut */}
@@ -1478,33 +1410,90 @@ export default function Page() {
       />
       
       <Header onExportClick={() => setShowExportModal(true)} />
-      <div className="flex flex-1 overflow-hidden min-h-0">
-        <SidebarNav />
-        <FileTree 
-          importedFiles={importedFiles}
-          onFileImport={handleFileImport}
-          onFileSelect={handleFileSelect}
-          selectedFile={selectedImportedFile}
+      <div className="flex flex-col flex-1 overflow-hidden min-h-0">
+        <div className="flex flex-1 overflow-hidden min-h-0">
+          <SidebarNav />
+          <FileTree 
+            importedFiles={importedFiles}
+            onFileImport={handleFileImport}
+            onFileSelect={handleFileSelect}
+            selectedFile={selectedImportedFile}
+          />
+          <Viewport 
+            preview={preview} 
+            onApplyOperation={handleApplyOperation} 
+            onSketchComplete={handleSketchCompleteWithHistory}
+            preview3DRef={preview3DRef}
+            currentView={currentView}
+            onTransformApply={handleTransformApply}
+            onPushPullApply={handlePushPullApply}
+            // Dimensional constraints
+            dimensionalConstraints={dimensionalConstraints}
+            onConstraintAdd={handleConstraintAdd}
+            onConstraintUpdate={handleConstraintUpdate}
+            onConstraintDelete={handleConstraintDelete}
+            dimensionMode={dimensionMode}
+            onDimensionModeChange={setDimensionMode}
+          />
+          <HistoryPanel
+            entries={history.entries}
+            currentIndex={history.currentIndex}
+            canUndo={history.canUndo}
+            canRedo={history.canRedo}
+            onUndo={history.undo}
+            onRedo={history.redo}
+            onJumpTo={history.jumpTo}
+            isCollapsed={historyPanelCollapsed}
+            onToggleCollapse={() => setHistoryPanelCollapsed(prev => !prev)}
+          />
+          <ChatPanel 
+            onSubmitCode={handleSubmitCode} 
+            kclCode={kclCode}
+            onValidate={(errors, warnings) => {
+              setParseErrors(errors);
+              setParseWarnings(warnings);
+            }}
+          />
+        </div>
+        
+        {/* Feature Timeline */}
+        <Timeline
+          features={featureHistory.features}
+          currentIndex={featureHistory.currentIndex}
+          activeFeatureId={featureHistory.activeFeatureId}
+          onFeatureClick={(featureId) => {
+            const index = featureHistory.getFeatureIndex(featureId);
+            if (index !== -1) {
+              featureHistory.rollback(index);
+            }
+          }}
+          onFeatureDoubleClick={(featureId) => {
+            // Open edit modal for the feature
+            const feature = featureHistory.getFeatureById(featureId);
+            if (feature) {
+              console.log('Edit feature:', feature);
+              // TODO: Open feature edit modal
+            }
+          }}
+          onReorder={featureHistory.reorder}
+          onDelete={featureHistory.deleteFeatureById}
+          onToggleSuppress={featureHistory.toggleSuppress}
+          onDuplicate={featureHistory.duplicate}
+          onRollbackTo={featureHistory.rollback}
         />
-        <Viewport 
-          preview={preview} 
-          onApplyOperation={handleApplyOperation} 
-          onSketchComplete={(code) => handleSubmitCode(code, 'Sketch Complete')}
-          preview3DRef={preview3DRef}
-          currentView={currentView}
-        />
-        <HistoryPanel
-          entries={history.entries}
-          currentIndex={history.currentIndex}
-          canUndo={history.canUndo}
-          canRedo={history.canRedo}
-          onUndo={history.undo}
-          onRedo={history.redo}
-          onJumpTo={history.jumpTo}
-          isCollapsed={historyPanelCollapsed}
-          onToggleCollapse={() => setHistoryPanelCollapsed(prev => !prev)}
-        />
-        <ChatPanel onSubmitCode={handleSubmitCode} kclCode={kclCode} />
+        
+        {/* KCL 파싱 에러 표시 */}
+        {showErrors && (parseErrors.length > 0 || parseWarnings.length > 0) && (
+          <KCLErrorDisplay
+            errors={parseErrors}
+            warnings={parseWarnings}
+            onDismiss={() => setShowErrors(false)}
+            onErrorClick={(error) => {
+              // 에러 클릭 시 해당 라인으로 이동 (향후 구현)
+              console.log('Error clicked:', error);
+            }}
+          />
+        )}
       </div>
       <ExportModal
         isOpen={showExportModal}

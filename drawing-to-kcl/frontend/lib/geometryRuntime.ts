@@ -49,17 +49,33 @@ import type {
 const BOX_REG =
   /let\s+(\w+)\s*=\s*box\s*\(\s*size\s*:\s*\[\s*([-\d.e]+)\s*,\s*([-\d.e]+)\s*,\s*([-\d.e]+)\s*]\s*,\s*center\s*:\s*\[\s*([-\d.e]+)\s*,\s*([-\d.e]+)\s*,\s*([-\d.e]+)\s*]\s*\)/gi;
 
+// Box simple: let name = box(width, height, depth) - center defaults to [0, height/2, 0]
+const BOX_SIMPLE_REG =
+  /let\s+(\w+)\s*=\s*box\s*\(\s*([-\d.e]+)\s*,\s*([-\d.e]+)\s*,\s*([-\d.e]+)\s*\)/gi;
+
 // Cylinder: let name = cylinder(radius: n, height: n, center: [x, y, z])
 const CYLINDER_REG =
   /let\s+(\w+)\s*=\s*cylinder\s*\(\s*radius\s*:\s*([-\d.e]+)\s*,\s*height\s*:\s*([-\d.e]+)\s*,\s*center\s*:\s*\[\s*([-\d.e]+)\s*,\s*([-\d.e]+)\s*,\s*([-\d.e]+)\s*]\s*\)/gi;
+
+// Cylinder simple: let name = cylinder(radius, height) - center defaults to [0, height/2, 0]
+const CYLINDER_SIMPLE_REG =
+  /let\s+(\w+)\s*=\s*cylinder\s*\(\s*([-\d.e]+)\s*,\s*([-\d.e]+)\s*\)/gi;
 
 // Sphere: let name = sphere(radius: n, center: [x, y, z])
 const SPHERE_REG =
   /let\s+(\w+)\s*=\s*sphere\s*\(\s*radius\s*:\s*([-\d.e]+)\s*,\s*center\s*:\s*\[\s*([-\d.e]+)\s*,\s*([-\d.e]+)\s*,\s*([-\d.e]+)\s*]\s*\)/gi;
 
+// Sphere simple: let name = sphere(radius) - center defaults to [0, radius, 0]
+const SPHERE_SIMPLE_REG =
+  /let\s+(\w+)\s*=\s*sphere\s*\(\s*([-\d.e]+)\s*\)/gi;
+
 // Cone: let name = cone(radius: n, height: n, center: [x, y, z])
 const CONE_REG =
   /let\s+(\w+)\s*=\s*cone\s*\(\s*radius\s*:\s*([-\d.e]+)\s*,\s*height\s*:\s*([-\d.e]+)\s*,\s*center\s*:\s*\[\s*([-\d.e]+)\s*,\s*([-\d.e]+)\s*,\s*([-\d.e]+)\s*]\s*\)/gi;
+
+// Cone simple: let name = cone(radius, height) - center defaults to [0, height/2, 0]
+const CONE_SIMPLE_REG =
+  /let\s+(\w+)\s*=\s*cone\s*\(\s*([-\d.e]+)\s*,\s*([-\d.e]+)\s*\)/gi;
 
 // Extrude: let name = extrude(source.face.direction, distance: n)
 const EXTRUDE_REG =
@@ -148,53 +164,125 @@ function parseNum(s: string): number {
 }
 
 function extractBoxFromLine(line: string): BoxSpec | null {
+  // Try full syntax first
   BOX_REG.lastIndex = 0;
   const m = BOX_REG.exec(line);
-  if (!m) return null;
-  const [, name, s1, s2, s3, c1, c2, c3] = m;
-  if (!name) return null;
-  const size: [number, number, number] = [parseNum(s1!), parseNum(s2!), parseNum(s3!)];
-  const center: [number, number, number] = [parseNum(c1!), parseNum(c2!), parseNum(c3!)];
-  if (size.some(Number.isNaN) || center.some(Number.isNaN)) return null;
-  return { id: `solid:${name}`, size, center };
+  if (m) {
+    const [, name, s1, s2, s3, c1, c2, c3] = m;
+    if (!name) return null;
+    const size: [number, number, number] = [parseNum(s1!), parseNum(s2!), parseNum(s3!)];
+    const center: [number, number, number] = [parseNum(c1!), parseNum(c2!), parseNum(c3!)];
+    if (size.some(Number.isNaN) || center.some(Number.isNaN)) return null;
+    return { id: `solid:${name}`, size, center };
+  }
+  
+  // Try simple syntax: let name = box(width, height, depth)
+  BOX_SIMPLE_REG.lastIndex = 0;
+  const ms = BOX_SIMPLE_REG.exec(line);
+  if (ms) {
+    const [, name, w, h, d] = ms;
+    if (!name) return null;
+    const width = parseNum(w!);
+    const height = parseNum(h!);
+    const depth = parseNum(d!);
+    if ([width, height, depth].some(Number.isNaN)) return null;
+    // Default center: object sits on ground plane, centered on X and Z
+    const center: [number, number, number] = [0, height / 2, 0];
+    return { id: `solid:${name}`, size: [width, height, depth], center };
+  }
+  
+  return null;
 }
 
 function extractCylinderFromLine(line: string): CylinderSpec | null {
+  // Try full syntax first
   CYLINDER_REG.lastIndex = 0;
   const m = CYLINDER_REG.exec(line);
-  if (!m) return null;
-  const [, name, r, h, c1, c2, c3] = m;
-  if (!name) return null;
-  const radius = parseNum(r!);
-  const height = parseNum(h!);
-  const center: [number, number, number] = [parseNum(c1!), parseNum(c2!), parseNum(c3!)];
-  if (Number.isNaN(radius) || Number.isNaN(height) || center.some(Number.isNaN)) return null;
-  return { id: `solid:${name}`, radius, height, center };
+  if (m) {
+    const [, name, r, h, c1, c2, c3] = m;
+    if (!name) return null;
+    const radius = parseNum(r!);
+    const height = parseNum(h!);
+    const center: [number, number, number] = [parseNum(c1!), parseNum(c2!), parseNum(c3!)];
+    if (Number.isNaN(radius) || Number.isNaN(height) || center.some(Number.isNaN)) return null;
+    return { id: `solid:${name}`, radius, height, center };
+  }
+  
+  // Try simple syntax: let name = cylinder(radius, height)
+  CYLINDER_SIMPLE_REG.lastIndex = 0;
+  const ms = CYLINDER_SIMPLE_REG.exec(line);
+  if (ms) {
+    const [, name, r, h] = ms;
+    if (!name) return null;
+    const radius = parseNum(r!);
+    const height = parseNum(h!);
+    if (Number.isNaN(radius) || Number.isNaN(height)) return null;
+    // Default center: cylinder sits on ground plane
+    const center: [number, number, number] = [0, height / 2, 0];
+    return { id: `solid:${name}`, radius, height, center };
+  }
+  
+  return null;
 }
 
 function extractSphereFromLine(line: string): SphereSpec | null {
+  // Try full syntax first
   SPHERE_REG.lastIndex = 0;
   const m = SPHERE_REG.exec(line);
-  if (!m) return null;
-  const [, name, r, c1, c2, c3] = m;
-  if (!name) return null;
-  const radius = parseNum(r!);
-  const center: [number, number, number] = [parseNum(c1!), parseNum(c2!), parseNum(c3!)];
-  if (Number.isNaN(radius) || center.some(Number.isNaN)) return null;
-  return { id: `solid:${name}`, radius, center };
+  if (m) {
+    const [, name, r, c1, c2, c3] = m;
+    if (!name) return null;
+    const radius = parseNum(r!);
+    const center: [number, number, number] = [parseNum(c1!), parseNum(c2!), parseNum(c3!)];
+    if (Number.isNaN(radius) || center.some(Number.isNaN)) return null;
+    return { id: `solid:${name}`, radius, center };
+  }
+  
+  // Try simple syntax: let name = sphere(radius)
+  SPHERE_SIMPLE_REG.lastIndex = 0;
+  const ms = SPHERE_SIMPLE_REG.exec(line);
+  if (ms) {
+    const [, name, r] = ms;
+    if (!name) return null;
+    const radius = parseNum(r!);
+    if (Number.isNaN(radius)) return null;
+    // Default center: sphere sits on ground plane
+    const center: [number, number, number] = [0, radius, 0];
+    return { id: `solid:${name}`, radius, center };
+  }
+  
+  return null;
 }
 
 function extractConeFromLine(line: string): ConeSpec | null {
+  // Try full syntax first
   CONE_REG.lastIndex = 0;
   const m = CONE_REG.exec(line);
-  if (!m) return null;
-  const [, name, r, h, c1, c2, c3] = m;
-  if (!name) return null;
-  const radius = parseNum(r!);
-  const height = parseNum(h!);
-  const center: [number, number, number] = [parseNum(c1!), parseNum(c2!), parseNum(c3!)];
-  if (Number.isNaN(radius) || Number.isNaN(height) || center.some(Number.isNaN)) return null;
-  return { id: `solid:${name}`, radius, height, center };
+  if (m) {
+    const [, name, r, h, c1, c2, c3] = m;
+    if (!name) return null;
+    const radius = parseNum(r!);
+    const height = parseNum(h!);
+    const center: [number, number, number] = [parseNum(c1!), parseNum(c2!), parseNum(c3!)];
+    if (Number.isNaN(radius) || Number.isNaN(height) || center.some(Number.isNaN)) return null;
+    return { id: `solid:${name}`, radius, height, center };
+  }
+  
+  // Try simple syntax: let name = cone(radius, height)
+  CONE_SIMPLE_REG.lastIndex = 0;
+  const ms = CONE_SIMPLE_REG.exec(line);
+  if (ms) {
+    const [, name, r, h] = ms;
+    if (!name) return null;
+    const radius = parseNum(r!);
+    const height = parseNum(h!);
+    if (Number.isNaN(radius) || Number.isNaN(height)) return null;
+    // Default center: cone sits on ground plane
+    const center: [number, number, number] = [0, height / 2, 0];
+    return { id: `solid:${name}`, radius, height, center };
+  }
+  
+  return null;
 }
 
 function extractExtrudeFromLine(line: string): ExtrudeSpec | null {
@@ -847,6 +935,81 @@ export function buildGeometrySpecFromKcl(kclCode: string): GeometrySpec {
     lofts,
     drafts
   };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ERROR-AWARE PARSING
+// ═══════════════════════════════════════════════════════════════
+
+import { validateKCL, createError, type KCLError, type KCLParseResult } from './kclErrorHandler';
+
+export interface GeometryParseResult {
+  success: boolean;
+  spec: GeometrySpec | null;
+  errors: KCLError[];
+  warnings: KCLError[];
+  parsedLines: number;
+  totalLines: number;
+}
+
+/**
+ * KCL 코드를 파싱하고 에러 정보와 함께 결과 반환
+ */
+export function parseKCLWithErrors(kclCode: string): GeometryParseResult {
+  const lines = kclCode.split('\n').filter(l => l.trim() && !l.trim().startsWith('//') && !l.trim().startsWith('#'));
+  const totalLines = lines.length;
+  
+  // 먼저 유효성 검사
+  const validation = validateKCL(kclCode);
+  
+  if (!validation.success) {
+    return {
+      success: false,
+      spec: null,
+      errors: validation.errors,
+      warnings: validation.warnings,
+      parsedLines: 0,
+      totalLines,
+    };
+  }
+  
+  // 파싱 시도
+  try {
+    const spec = buildGeometrySpecFromKcl(kclCode);
+    
+    // 아무것도 파싱되지 않은 경우 경고
+    const warnings: KCLError[] = [];
+    const parsedCount = spec.artifacts.length;
+    
+    if (parsedCount === 0 && totalLines > 0) {
+      warnings.push(createError('PARSE_ERROR', 
+        '인식된 도형이 없습니다. 문법을 확인하세요.', {
+          suggestion: '예: let myBox = box(size: [10, 20, 30], center: [0, 0, 0]) 또는 let myBox = box(10, 20, 30)',
+        }
+      ));
+    }
+    
+    return {
+      success: parsedCount > 0 || totalLines === 0,
+      spec,
+      errors: [],
+      warnings,
+      parsedLines: parsedCount,
+      totalLines,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      spec: null,
+      errors: [createError('RUNTIME_ERROR', 
+        error instanceof Error ? error.message : '알 수 없는 파싱 오류',
+        { suggestion: 'KCL 문법을 확인하세요' }
+      )],
+      warnings: [],
+      parsedLines: 0,
+      totalLines,
+    };
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════
